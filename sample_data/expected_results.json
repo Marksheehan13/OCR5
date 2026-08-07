@@ -1,0 +1,17 @@
+{
+  "sample_invoice_1.jpg": {
+    "date": "04/08/2026",
+    "supplier": "Kerry Office Supplies Ltd",
+    "amount": "184.50"
+  },
+  "sample_invoice_2.jpg": {
+    "date": "27/07/2026",
+    "supplier": "Munster Print & Design",
+    "amount": "412.00"
+  },
+  "sample_invoice_3.jpg": {
+    "date": "15/06/2026",
+    "supplier": "O'Sullivan Hardware",
+    "amount": "56.99"
+  }
+}
