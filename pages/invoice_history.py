@@ -11,7 +11,7 @@ stored in the SQLite database.
 import pandas as pd
 import streamlit as st
 
-from src.database import get_all_invoices
+from src.database import DatabaseError, get_all_invoices
 
 
 st.set_page_config(
@@ -30,7 +30,14 @@ st.caption(
 
 # Load invoices
 
-invoices = get_all_invoices()
+try:
+    invoices = get_all_invoices()
+except DatabaseError as exc:
+    st.warning(
+        f"{exc}\n\nAdd SUPABASE_URL and SUPABASE_KEY on the main page's sidebar "
+        "(or in Streamlit secrets) to enable invoice history."
+    )
+    st.stop()
 
 
 if not invoices:

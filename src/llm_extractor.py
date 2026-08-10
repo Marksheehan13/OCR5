@@ -2,17 +2,21 @@
 llm_extractor.py
 
 The core of OCR5: instead of OCR + heuristic scoring (OCR4's approach),
-this sends the invoice image directly to Claude and asks it to read
-and extract the fields, with its own confidence and reasoning per
-field. This trades "fully offline, free" for "actually understands
-what it's looking at" -- see docs/comparison.md for the full
-before/after rationale versus OCR4.
+this sends the invoice image directly to a vision-capable LLM and asks
+it to read and extract the fields, with its own confidence and
+reasoning per field. This trades "fully offline, free" for "actually
+understands what it's looking at" -- see docs/comparison.md for the
+full before/after rationale versus OCR4.
+
+Multi-provider support (via litellm): you're not locked into a paid
+Anthropic key. Google Gemini's Flash models have a genuinely free API
+tier with native image/vision support, so that's the default here --
+see PROVIDERS below for the full list and how to switch.
 
 Design notes:
   - Images are resized so their longest edge is ~1568px before
-    sending. This matches Claude's documented optimal vision
-    resolution -- larger images cost more tokens/latency without
-    improving accuracy, since the model downsamples internally anyway.
+    sending -- a good balance across providers; larger images cost
+    more tokens/latency without reliably improving accuracy.
   - The prompt asks for strict JSON only (no markdown fences, no
     preamble) so the response can be parsed directly and reliably.
   - The model is asked for a confidence + short reasoning per field,
@@ -25,17 +29,32 @@ from __future__ import annotations
 
 import base64
 import json
-import mimetypes
-import os
 from io import BytesIO
 
-from anthropic import Anthropic, APIError, APIConnectionError, AuthenticationError, RateLimitError
+import litellm
 from PIL import Image
 
 from .models import FieldResult, InvoiceExtraction
 
-DEFAULT_MODEL = "claude-sonnet-5"
-MAX_LONG_EDGE = 1568  # Claude's documented optimal image resolution
+MAX_LONG_EDGE = 1568
+
+# Provider display name -> (litellm model string, env var litellm expects the key under).
+# Gemini is the default because its Flash models have a genuinely free API
+# tier (no credit card required) with native vision support -- see
+# docs/comparison.md and README.md for the cost tradeoffs of each option.
+#
+# Groq's vision-model lineup changes frequently (models get deprecated with
+# little notice) -- if the Groq option stops working, check
+# console.groq.com/docs/vision for the current vision-capable model name
+# and update PROVIDERS below.
+PROVIDERS: dict[str, dict[str, str]] = {
+    "Google Gemini (free tier)": {"model": "gemini/gemini-2.5-flash", "env_var": "GEMINI_API_KEY"},
+    "Anthropic": {"model": "claude-sonnet-5", "env_var": "ANTHROPIC_API_KEY"},
+    "OpenAI": {"model": "gpt-5-mini", "env_var": "OPENAI_API_KEY"},
+    "Groq": {"model": "groq/meta-llama/llama-4-scout-17b-16e-instruct", "env_var": "GROQ_API_KEY"},
+    "OpenRouter": {"model": "openrouter/openai/gpt-5-mini", "env_var": "OPENROUTER_API_KEY"},
+}
+DEFAULT_PROVIDER = "Google Gemini (free tier)"
 
 SYSTEM_PROMPT = """You are an invoice/receipt data extraction system. You will be shown a photo \
 of an invoice or receipt. Extract exactly three fields: the invoice/transaction date, the \
@@ -81,7 +100,7 @@ class ExtractionError(Exception):
 
 
 def _load_and_encode_image(path: str) -> tuple[str, str]:
-    """Load an image, resize to Claude's optimal long-edge, return (base64_data, media_type)."""
+    """Load an image, resize to a sensible max resolution, return (base64_data, media_type)."""
     try:
         img = Image.open(path)
         img = img.convert("RGB")
@@ -131,57 +150,66 @@ def _field_result(data: dict, field_name: str) -> FieldResult:
 def extract_invoice(
     image_path: str,
     api_key: str | None = None,
-    model: str = DEFAULT_MODEL,
+    provider: str = DEFAULT_PROVIDER,
+    model: str | None = None,
 ) -> InvoiceExtraction:
     """
-    Send one invoice image to Claude and return the extracted fields.
+    Send one invoice image to a vision-capable LLM and return the
+    extracted fields.
 
-    api_key: falls back to the ANTHROPIC_API_KEY environment variable
-    if not passed explicitly (app.py reads it from Streamlit secrets
-    and passes it in; main.py reads it from the environment).
+    provider: one of the keys in PROVIDERS (defaults to Gemini's free tier).
+    model: overrides the default model string for the chosen provider,
+    if you want to point at a specific/newer model.
+    api_key: required -- the key for whichever provider you selected.
+    Callers (app.py, main.py) are responsible for sourcing this from
+    an env var or Streamlit secrets matching PROVIDERS[provider]['env_var'].
     """
-    resolved_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-    if not resolved_key:
+    if provider not in PROVIDERS:
         raise ExtractionError(
-            "No Anthropic API key found. Set the ANTHROPIC_API_KEY environment variable "
-            "(CLI) or add it to Streamlit secrets as ANTHROPIC_API_KEY (web UI)."
+            f"Unknown provider '{provider}'. Choose one of: {', '.join(PROVIDERS)}"
+        )
+    if not api_key:
+        env_var = PROVIDERS[provider]["env_var"]
+        raise ExtractionError(
+            f"No API key provided for {provider}. Set the {env_var} environment variable "
+            f"(CLI) or enter one in the app sidebar / Streamlit secrets (web UI)."
         )
 
+    resolved_model = model or PROVIDERS[provider]["model"]
     image_data, media_type = _load_and_encode_image(image_path)
 
-    client = Anthropic(api_key=resolved_key)
-
     try:
-        response = client.messages.create(
-            model=model,
+        response = litellm.completion(
+            model=resolved_model,
+            api_key=api_key,
             max_tokens=1024,
-            system=SYSTEM_PROMPT,
             messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
                 {
                     "role": "user",
                     "content": [
                         {
-                            "type": "image",
-                            "source": {"type": "base64", "media_type": media_type, "data": image_data},
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{media_type};base64,{image_data}"},
                         },
                         {
                             "type": "text",
                             "text": "Extract the date, supplier, and total amount from this invoice/receipt.",
                         },
                     ],
-                }
+                },
             ],
         )
-    except AuthenticationError as exc:
-        raise ExtractionError("Anthropic API authentication failed -- check your API key.") from exc
-    except RateLimitError as exc:
-        raise ExtractionError("Anthropic API rate limit hit -- wait a moment and try again.") from exc
-    except APIConnectionError as exc:
-        raise ExtractionError(f"Could not reach the Anthropic API: {exc}") from exc
-    except APIError as exc:
-        raise ExtractionError(f"Anthropic API error: {exc}") from exc
+    except litellm.exceptions.AuthenticationError as exc:
+        raise ExtractionError(f"{provider} authentication failed -- check your API key.") from exc
+    except litellm.exceptions.RateLimitError as exc:
+        raise ExtractionError(f"{provider} rate limit hit -- wait a moment and try again.") from exc
+    except litellm.exceptions.APIConnectionError as exc:
+        raise ExtractionError(f"Could not reach {provider}: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001 - surface any other provider-side failure clearly
+        raise ExtractionError(f"{provider} request failed: {exc}") from exc
 
-    raw_text = "".join(block.text for block in response.content if hasattr(block, "text"))
+    raw_text = response.choices[0].message.content or ""
     data = _parse_json_response(raw_text)
 
     result = InvoiceExtraction(

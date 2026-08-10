@@ -6,19 +6,21 @@ Streamlit web front end for OCR5.
 Flow:
 Upload invoice
         ↓
-Claude Vision extraction
+LLM vision extraction (Gemini free tier by default -- see PROVIDERS
+in src/llm_extractor.py for other options)
         ↓
 Review/edit results
         ↓
-Save invoice permanently to SQLite memory database
+Save invoice permanently to the database
         ↓
 Export to Excel
 
-Requires an Anthropic API key.
+Requires an API key for whichever provider you select in the sidebar.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -28,14 +30,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pandas as pd
 import streamlit as st
 
-from src.database import initialise_database
+from src.database import DatabaseError, initialise_database
 from src.database_integration import store_invoice_result
 from src.excel_writer import write_invoices_to_excel
 from src.llm_extractor import ExtractionError, extract_invoice
 from src.models import InvoiceExtraction
 
 
-# Create database if it does not exist
+# Create database if it does not exist (no-op for the Supabase-backed
+# version -- the table already exists -- kept for interface compatibility)
 initialise_database()
 
 
@@ -49,29 +52,40 @@ st.set_page_config(
 st.title("🧠 OCR5: LLM-Based Invoice Extraction")
 
 st.caption(
-    "Upload photographed invoices or receipts. Claude extracts "
-    "date, supplier and total amount, then OCR5 remembers processed invoices."
+    "Upload photographed invoices or receipts. Pick a provider in the sidebar "
+    "(Gemini's free tier works out of the box) to extract date, supplier, and "
+    "total amount -- OCR5 remembers every processed invoice."
 )
 
 
 # ---------------- SIDEBAR ----------------
 
 with st.sidebar:
-    st.subheader("API Key")
+    st.subheader("LLM Provider")
+
+    from src.llm_extractor import PROVIDERS, DEFAULT_PROVIDER
+
+    provider = st.selectbox(
+        "Provider",
+        options=list(PROVIDERS.keys()),
+        index=list(PROVIDERS.keys()).index(DEFAULT_PROVIDER),
+        help="Google Gemini's Flash models have a genuinely free API tier (no credit "
+        "card needed) with native image support -- recommended if you don't want to pay. "
+        "Other providers require their own paid or free-tier API key.",
+    )
+    env_var_name = PROVIDERS[provider]["env_var"]
 
     default_key = (
-        st.secrets.get("ANTHROPIC_API_KEY", "")
+        st.secrets.get(env_var_name, "")
         if hasattr(st, "secrets")
         else ""
     )
 
     api_key_input = st.text_input(
-        "Anthropic API key",
+        f"{provider} API key",
         value="",
         type="password",
-        placeholder="sk-ant-..."
-        if not default_key
-        else "Using Streamlit secrets",
+        placeholder=f"Using {env_var_name} from Streamlit secrets" if default_key else "Paste your API key",
     )
 
     active_key = api_key_input or default_key
@@ -80,8 +94,39 @@ with st.sidebar:
         st.success("API key set.")
     else:
         st.warning(
-            "No API key set. Add one above or in Streamlit secrets."
+            f"No API key set for {provider}. Add one above, or set {env_var_name} "
+            "in this app's Streamlit secrets."
         )
+
+    if provider == "Google Gemini (free tier)":
+        st.caption("Get a free key at aistudio.google.com/apikey -- no credit card required.")
+
+    st.divider()
+    st.subheader("Invoice History (Supabase)")
+
+    supabase_url = (
+        st.secrets.get("SUPABASE_URL", "") if hasattr(st, "secrets") else ""
+    ) or os.environ.get("SUPABASE_URL", "")
+    supabase_key = (
+        st.secrets.get("SUPABASE_KEY", "") if hasattr(st, "secrets") else ""
+    ) or os.environ.get("SUPABASE_KEY", "")
+
+    if not supabase_url:
+        supabase_url = st.text_input("Supabase URL", value="", placeholder="https://xxxxx.supabase.co")
+    if not supabase_key:
+        supabase_key = st.text_input("Supabase anon/publishable key", value="", type="password")
+
+    if supabase_url and supabase_key:
+        os.environ["SUPABASE_URL"] = supabase_url
+        os.environ["SUPABASE_KEY"] = supabase_key
+        st.success("Invoice history storage connected.")
+        database_configured = True
+    else:
+        st.info(
+            "Add Supabase credentials to enable invoice history (optional -- "
+            "extraction still works without it, results just won't be saved)."
+        )
+        database_configured = False
 
 
 # ---------------- SESSION STATE ----------------
@@ -161,6 +206,7 @@ if process_clicked and uploaded_files:
                 result = extract_invoice(
                     tmp_path,
                     api_key=active_key,
+                    provider=provider,
                 )
 
 
@@ -168,15 +214,17 @@ if process_clicked and uploaded_files:
                 result.source_file = uploaded_file.name
 
 
-                # Save permanently into database memory
-                database_result = store_invoice_result(
-                    result
-                )
-
-
-                status.write(
-                    "Saved to OCR5 memory database."
-                )
+                # Save permanently into invoice history, if Supabase is configured.
+                # This is best-effort: a storage hiccup shouldn't lose the
+                # extraction result the person is about to review.
+                if database_configured:
+                    try:
+                        store_invoice_result(result)
+                        status.write("Saved to invoice history.")
+                    except DatabaseError as db_exc:
+                        status.write(f"Note: couldn't save to invoice history ({db_exc})")
+                else:
+                    status.write("Invoice history not configured -- result won't be saved (see sidebar).")
 
 
             except ExtractionError as exc:

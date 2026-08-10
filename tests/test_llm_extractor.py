@@ -2,11 +2,12 @@
 tests/test_llm_extractor.py
 
 Tests for llm_extractor.py's parsing/orchestration logic, using a
-mocked Anthropic client so the test suite runs free and offline --
-it never makes a real API call. This tests "does OCR5 correctly
-handle what the API gives it", not "is Claude good at reading
-invoices" (that's what tests/manual_accuracy_check.py is for, run
-separately with a real key against real images).
+mocked litellm.completion() call so the test suite runs free and
+offline -- it never makes a real API call to any provider. This tests
+"does OCR5 correctly handle what the API gives it", not "is this
+model good at reading invoices" (for that, run it against real images
+with a real key and check results by eye, or benchmark against a
+labeled dataset the way OCR4's tests/benchmark.py does).
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.llm_extractor import (
     ExtractionError,
+    PROVIDERS,
     _field_result,
     _parse_json_response,
     extract_invoice,
@@ -73,20 +75,29 @@ def test_field_result_string_null():
     assert result.value is None
 
 
-# --- extract_invoice orchestration (mocked API) --------------------------------
+# --- Provider config sanity check ----------------------------------------------
 
-def _mock_response(payload: dict):
-    text_block = MagicMock()
-    text_block.text = json.dumps(payload)
+def test_all_providers_have_model_and_env_var():
+    for name, cfg in PROVIDERS.items():
+        assert "model" in cfg and cfg["model"], name
+        assert "env_var" in cfg and cfg["env_var"], name
+
+
+# --- extract_invoice orchestration (mocked litellm.completion) -----------------
+
+def _mock_completion_response(payload: dict):
+    message = MagicMock()
+    message.content = json.dumps(payload)
+    choice = MagicMock()
+    choice.message = message
     response = MagicMock()
-    response.content = [text_block]
+    response.choices = [choice]
     return response
 
 
-@patch("src.llm_extractor.Anthropic")
-def test_extract_invoice_happy_path(mock_anthropic_cls):
-    mock_client = MagicMock()
-    mock_client.messages.create.return_value = _mock_response(
+@patch("src.llm_extractor.litellm.completion")
+def test_extract_invoice_happy_path(mock_completion):
+    mock_completion.return_value = _mock_completion_response(
         {
             "date": "04/08/2026",
             "date_confidence": 97,
@@ -101,7 +112,6 @@ def test_extract_invoice_happy_path(mock_anthropic_cls):
             "warnings": [],
         }
     )
-    mock_anthropic_cls.return_value = mock_client
 
     result = extract_invoice(str(SAMPLES_DIR / "sample_invoice_1.jpg"), api_key="fake-key-for-test")
 
@@ -109,13 +119,33 @@ def test_extract_invoice_happy_path(mock_anthropic_cls):
     assert result.supplier.value == "Kerry Office Supplies Ltd"
     assert result.amount.value == "184.50"
     assert result.needs_review is False
-    mock_client.messages.create.assert_called_once()
+    mock_completion.assert_called_once()
+
+    # Confirm the image was actually sent as multimodal content, not just text.
+    call_kwargs = mock_completion.call_args.kwargs
+    user_message = call_kwargs["messages"][1]
+    content_types = [block["type"] for block in user_message["content"]]
+    assert "image_url" in content_types
 
 
-@patch("src.llm_extractor.Anthropic")
-def test_extract_invoice_flags_low_confidence_for_review(mock_anthropic_cls):
-    mock_client = MagicMock()
-    mock_client.messages.create.return_value = _mock_response(
+@patch("src.llm_extractor.litellm.completion")
+def test_extract_invoice_uses_correct_model_for_provider(mock_completion):
+    mock_completion.return_value = _mock_completion_response(
+        {"date": None, "date_confidence": 0, "supplier": None, "supplier_confidence": 0,
+         "amount": None, "amount_confidence": 0, "currency": "EUR", "warnings": []}
+    )
+
+    extract_invoice(
+        str(SAMPLES_DIR / "sample_invoice_1.jpg"),
+        api_key="fake-key",
+        provider="Google Gemini (free tier)",
+    )
+    assert mock_completion.call_args.kwargs["model"] == PROVIDERS["Google Gemini (free tier)"]["model"]
+
+
+@patch("src.llm_extractor.litellm.completion")
+def test_extract_invoice_flags_low_confidence_for_review(mock_completion):
+    mock_completion.return_value = _mock_completion_response(
         {
             "date": "04/08/2026",
             "date_confidence": 40,
@@ -130,7 +160,6 @@ def test_extract_invoice_flags_low_confidence_for_review(mock_anthropic_cls):
             "warnings": ["Image is cropped, top of receipt not visible"],
         }
     )
-    mock_anthropic_cls.return_value = mock_client
 
     result = extract_invoice(str(SAMPLES_DIR / "sample_invoice_1.jpg"), api_key="fake-key-for-test")
 
@@ -139,10 +168,14 @@ def test_extract_invoice_flags_low_confidence_for_review(mock_anthropic_cls):
     assert len(result.warnings) == 1
 
 
-def test_extract_invoice_raises_without_api_key(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    with pytest.raises(ExtractionError, match="No Anthropic API key"):
+def test_extract_invoice_raises_without_api_key():
+    with pytest.raises(ExtractionError, match="No API key provided"):
         extract_invoice(str(SAMPLES_DIR / "sample_invoice_1.jpg"), api_key=None)
+
+
+def test_extract_invoice_raises_on_unknown_provider():
+    with pytest.raises(ExtractionError, match="Unknown provider"):
+        extract_invoice(str(SAMPLES_DIR / "sample_invoice_1.jpg"), api_key="fake-key", provider="NotAProvider")
 
 
 def test_extract_invoice_raises_on_missing_file():
@@ -150,15 +183,22 @@ def test_extract_invoice_raises_on_missing_file():
         extract_invoice("/tmp/this_file_does_not_exist_12345.jpg", api_key="fake-key")
 
 
-@patch("src.llm_extractor.Anthropic")
-def test_extract_invoice_raises_extraction_error_on_bad_json(mock_anthropic_cls):
-    mock_client = MagicMock()
-    text_block = MagicMock()
-    text_block.text = "Sorry, I can't read this image clearly."
+@patch("src.llm_extractor.litellm.completion")
+def test_extract_invoice_raises_extraction_error_on_bad_json(mock_completion):
+    message = MagicMock()
+    message.content = "Sorry, I can't read this image clearly."
+    choice = MagicMock()
+    choice.message = message
     response = MagicMock()
-    response.content = [text_block]
-    mock_client.messages.create.return_value = response
-    mock_anthropic_cls.return_value = mock_client
+    response.choices = [choice]
+    mock_completion.return_value = response
 
+    with pytest.raises(ExtractionError):
+        extract_invoice(str(SAMPLES_DIR / "sample_invoice_1.jpg"), api_key="fake-key-for-test")
+
+
+@patch("src.llm_extractor.litellm.completion")
+def test_extract_invoice_wraps_provider_errors(mock_completion):
+    mock_completion.side_effect = RuntimeError("connection reset")
     with pytest.raises(ExtractionError):
         extract_invoice(str(SAMPLES_DIR / "sample_invoice_1.jpg"), api_key="fake-key-for-test")

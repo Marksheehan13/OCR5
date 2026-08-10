@@ -3,24 +3,30 @@ main.py
 
 Command-line entry point for OCR5. Same interface as OCR4's main.py --
 processes every supported image in a folder (or a single file) and
-writes an Excel report -- but extraction is now one Claude API call
-per image instead of 16 local OCR passes.
+writes an Excel report -- but extraction is now one LLM API call per
+image instead of 16 local OCR passes.
 
-Requires the ANTHROPIC_API_KEY environment variable to be set.
+Multi-provider: defaults to Google Gemini's free tier (GEMINI_API_KEY).
+See src/llm_extractor.py's PROVIDERS dict for other options.
 
 Usage:
-    export ANTHROPIC_API_KEY=sk-ant-...
+    export GEMINI_API_KEY=...
     python main.py --input ./invoices --output results.xlsx
+
+    # or a different provider:
+    export ANTHROPIC_API_KEY=sk-ant-...
+    python main.py --input ./invoices --output results.xlsx --provider Anthropic
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 from src.excel_writer import write_invoices_to_excel
-from src.llm_extractor import ExtractionError, extract_invoice
+from src.llm_extractor import PROVIDERS, DEFAULT_PROVIDER, ExtractionError, extract_invoice
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic", ".heif", ".bmp", ".tiff", ".webp"}
 
@@ -37,7 +43,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="OCR5: LLM-based invoice extraction")
     parser.add_argument("--input", required=True, help="Path to an image file or a folder of images")
     parser.add_argument("--output", default="invoices.xlsx", help="Path to the output .xlsx file")
-    parser.add_argument("--model", default="claude-sonnet-5", help="Claude model to use")
+    parser.add_argument(
+        "--provider", default=DEFAULT_PROVIDER, choices=list(PROVIDERS.keys()),
+        help="Which LLM provider to use (default: Gemini's free tier)",
+    )
+    parser.add_argument("--model", default=None, help="Override the default model for the chosen provider")
     args = parser.parse_args()
 
     input_path = Path(args.input)
@@ -50,11 +60,17 @@ def main() -> None:
         print(f"No supported images found in '{input_path}'.", file=sys.stderr)
         sys.exit(1)
 
+    env_var = PROVIDERS[args.provider]["env_var"]
+    api_key = os.environ.get(env_var)
+    if not api_key:
+        print(f"Error: {env_var} environment variable not set (needed for {args.provider}).", file=sys.stderr)
+        sys.exit(1)
+
     results = []
     for path in image_paths:
         print(f"Processing {path.name} ...")
         try:
-            result = extract_invoice(str(path), model=args.model)
+            result = extract_invoice(str(path), api_key=api_key, provider=args.provider, model=args.model)
         except ExtractionError as exc:
             print(f"  ERROR: {exc}", file=sys.stderr)
             continue
