@@ -17,7 +17,7 @@ from src.database_integration import store_invoice_result
 from src.duplicate_detector import DuplicateMatch, find_duplicate_matches
 from src.excel_writer import write_invoices_to_excel
 from src.llm_extractor import DEFAULT_PROVIDER, PROVIDERS, ExtractionError, extract_invoice
-from src.models import InvoiceExtraction
+from src.models import InvoiceExtraction, LineItem
 from src.settings import get_setting, save_settings
 
 initialise_database()
@@ -142,6 +142,18 @@ if process_clicked and uploaded_files:
 def _build_edited_invoice(idx: int, result: InvoiceExtraction) -> InvoiceExtraction:
     overrides = st.session_state.overrides.get(f"override_{idx}", {})
     field = type(result.date)
+    line_items = []
+    for item_idx, item in enumerate(result.line_items):
+        edited = overrides.get("line_items", {}).get(item_idx, {})
+        line_items.append(LineItem(
+            description=edited.get("description", item.description),
+            quantity=edited.get("quantity", item.quantity),
+            unit_price=edited.get("unit_price", item.unit_price),
+            vat_rate=edited.get("vat_rate", item.vat_rate),
+            line_total=edited.get("line_total", item.line_total),
+            confidence=item.confidence,
+            warnings=item.warnings,
+        ))
     return InvoiceExtraction(
         source_file=result.source_file,
         date=field(value=overrides.get("date", result.date.value or ""), confidence=result.date.effective_confidence, reasons=result.date.reasons),
@@ -152,6 +164,7 @@ def _build_edited_invoice(idx: int, result: InvoiceExtraction) -> InvoiceExtract
         subtotal=field(value=overrides.get("subtotal", result.subtotal.value or ""), confidence=result.subtotal.effective_confidence, reasons=result.subtotal.reasons),
         vat_amount=field(value=overrides.get("vat_amount", result.vat_amount.value or ""), confidence=result.vat_amount.effective_confidence, reasons=result.vat_amount.reasons),
         vat_rate=field(value=overrides.get("vat_rate", result.vat_rate.value or ""), confidence=result.vat_rate.effective_confidence, reasons=result.vat_rate.reasons),
+        line_items=line_items,
         warnings=result.warnings,
         raw_text=result.raw_text,
         validation_warnings=result.validation_warnings,
@@ -212,6 +225,26 @@ if st.session_state.results:
                     overrides[key] = new_value
                     st.write(f"Confidence: {field_result.effective_confidence}%")
 
+            st.markdown("#### Line items")
+            if not result.line_items:
+                st.info("No line items were confidently identified. You can still approve the invoice.")
+            else:
+                line_overrides = overrides.setdefault("line_items", {})
+                for item_idx, item in enumerate(result.line_items):
+                    item_values = line_overrides.setdefault(item_idx, {})
+                    st.caption(f"Item {item_idx + 1} · confidence {item.confidence}%")
+                    item_cols = st.columns(5)
+                    for col, label, key, value in zip(
+                        item_cols,
+                        ["Description", "Quantity", "Unit price", "VAT %", "Line total"],
+                        ["description", "quantity", "unit_price", "vat_rate", "line_total"],
+                        [item.description, item.quantity or "", item.unit_price or "", item.vat_rate or "", item.line_total or ""],
+                    ):
+                        with col:
+                            item_values[key] = st.text_input(label, value=item_values.get(key, value), key=f"line_{idx}_{item_idx}_{key}")
+                    if item.warnings:
+                        st.warning("; ".join(item.warnings))
+
             edited_for_duplicate_check = _build_edited_invoice(idx, result)
             duplicate_matches = _get_duplicate_matches(idx, edited_for_duplicate_check)
             if duplicate_matches:
@@ -228,7 +261,7 @@ if st.session_state.results:
 
     if database_configured:
         st.subheader("Save approved invoices")
-        st.caption("Invoices are not written to Supabase until you explicitly approve and save them.")
+        st.caption("Invoices are not written to Supabase until you explicitly approve and save them. Line items are currently kept with the reviewed invoice in session and will be persisted in Step 8B.")
         unsaved_approved = []
         blocked_duplicates = []
         for idx, result in enumerate(st.session_state.results):
@@ -284,6 +317,7 @@ if st.session_state.results:
             "VAT rate %": r.vat_rate.value,
             "Total": r.amount.value,
             "Currency": r.currency,
+            "Line items": len(r.line_items),
             "Confidence": r.overall_confidence,
         }
         for r in export_rows

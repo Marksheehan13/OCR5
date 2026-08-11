@@ -9,7 +9,7 @@ from io import BytesIO
 import litellm
 from PIL import Image
 
-from .models import FieldResult, InvoiceExtraction
+from .models import FieldResult, InvoiceExtraction, LineItem
 from .validator import validate_extraction
 
 MAX_LONG_EDGE = 1568
@@ -31,8 +31,11 @@ SYSTEM_PROMPT = """You are an invoice/receipt data extraction system. Extract th
 - subtotal if explicitly shown
 - VAT/tax amount if explicitly shown
 - VAT/tax rate if explicitly shown
+- every visible invoice line item, excluding subtotal, VAT, discounts, shipping and final totals
 
-Do not guess. If a field is absent or unreadable, return null with confidence 0.
+For each line item extract description, quantity, unit price, VAT rate and line total when explicitly shown. Preserve the order in which items appear. Do not invent missing values.
+
+Do not guess. If a field is absent or unreadable, return null with confidence 0. If there are no identifiable line items, return an empty array.
 Respond with ONLY this JSON object:
 {
   "date": "DD/MM/YYYY or null", "date_confidence": 0-100, "date_reasoning": "short reason",
@@ -43,6 +46,9 @@ Respond with ONLY this JSON object:
   "subtotal": "numeric string with 2 decimals or null", "subtotal_confidence": 0-100, "subtotal_reasoning": "short reason",
   "vat_amount": "numeric string with 2 decimals or null", "vat_amount_confidence": 0-100, "vat_amount_reasoning": "short reason",
   "vat_rate": "numeric percentage without % or null", "vat_rate_confidence": 0-100, "vat_rate_reasoning": "short reason",
+  "line_items": [
+    {"description": "string", "quantity": "numeric string or null", "unit_price": "numeric string or null", "vat_rate": "numeric percentage or null", "line_total": "numeric string or null", "confidence": 0-100, "warnings": []}
+  ],
   "warnings": []
 }"""
 
@@ -85,6 +91,31 @@ def _field_result(data: dict, field_name: str) -> FieldResult:
     return FieldResult(str(value), confidence, [reasoning] if reasoning else [])
 
 
+def _line_items(data: dict) -> list[LineItem]:
+    items = data.get("line_items") or []
+    if not isinstance(items, list):
+        return []
+    parsed = []
+    for raw in items:
+        if not isinstance(raw, dict):
+            continue
+        description = str(raw.get("description") or "").strip()
+        confidence = max(0, min(100, int(raw.get("confidence", 0) or 0)))
+        warnings = [str(w) for w in (raw.get("warnings") or [])]
+        if not description:
+            warnings.append("Description was not readable")
+        parsed.append(LineItem(
+            description=description,
+            quantity=None if raw.get("quantity") in (None, "", "null") else str(raw.get("quantity")),
+            unit_price=None if raw.get("unit_price") in (None, "", "null") else str(raw.get("unit_price")),
+            vat_rate=None if raw.get("vat_rate") in (None, "", "null") else str(raw.get("vat_rate")),
+            line_total=None if raw.get("line_total") in (None, "", "null") else str(raw.get("line_total")),
+            confidence=confidence,
+            warnings=warnings,
+        ))
+    return parsed
+
+
 def extract_invoice(image_path: str, api_key: str | None = None, provider: str = DEFAULT_PROVIDER, model: str | None = None) -> InvoiceExtraction:
     if provider not in PROVIDERS:
         raise ExtractionError(f"Unknown provider '{provider}'.")
@@ -94,12 +125,12 @@ def extract_invoice(image_path: str, api_key: str | None = None, provider: str =
     image_data, media_type = _load_and_encode_image(image_path)
     try:
         response = litellm.completion(
-            model=resolved_model, api_key=api_key, max_tokens=1200,
+            model=resolved_model, api_key=api_key, max_tokens=1800,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": [
                     {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{image_data}"}},
-                    {"type": "text", "text": "Extract all requested invoice fields from this document."},
+                    {"type": "text", "text": "Extract all requested invoice fields and every visible line item from this document."},
                 ]},
             ],
         )
@@ -120,7 +151,7 @@ def extract_invoice(image_path: str, api_key: str | None = None, provider: str =
         currency=data.get("currency") or "EUR",
         invoice_number=_field_result(data, "invoice_number"), subtotal=_field_result(data, "subtotal"),
         vat_amount=_field_result(data, "vat_amount"), vat_rate=_field_result(data, "vat_rate"),
-        warnings=list(data.get("warnings") or []), raw_text=raw_text,
+        line_items=_line_items(data), warnings=list(data.get("warnings") or []), raw_text=raw_text,
     )
     result = validate_extraction(result)
     from .verifier import verify_extraction
