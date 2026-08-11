@@ -10,8 +10,8 @@ full before/after rationale versus OCR4.
 
 Multi-provider support (via litellm): you're not locked into a paid
 Anthropic key. Google Gemini's Flash models have a genuinely free API
-tier with native image/vision support, so that's the default here --
-see PROVIDERS below for the full list and how to switch.
+tier with native vision support, so that's the default here -- see
+PROVIDERS below for the full list and how to switch.
 
 Design notes:
   - Images are resized so their longest edge is ~1568px before
@@ -19,10 +19,10 @@ Design notes:
     more tokens/latency without reliably improving accuracy.
   - The prompt asks for strict JSON only (no markdown fences, no
     preamble) so the response can be parsed directly and reliably.
-  - The model is asked for a confidence + short reasoning per field,
-    same idea as OCR4's confidence layer, but now it's the model's own
-    self-assessment of how legible/certain each field was, rather than
-    a rule-based score.
+  - The model reports a confidence score, but OCR5 now also applies
+    deterministic validation before presenting the effective confidence
+    to the user. A model's self-reported confidence is never treated as
+    the only signal.
 """
 
 from __future__ import annotations
@@ -35,21 +35,10 @@ import litellm
 from PIL import Image
 
 from .models import FieldResult, InvoiceExtraction
+from .validator import validate_extraction
 
 MAX_LONG_EDGE = 1568
 
-# Provider display name -> (litellm model string, env var litellm expects the key under).
-# Gemini is the default because its Flash models have a genuinely free API
-# tier (no credit card required) with native vision support -- see
-# docs/comparison.md and README.md for the cost tradeoffs of each option.
-#
-# Both Google and Groq deprecate/rename specific model versions frequently
-# (this file has already been updated once after gemini-2.5-flash and then
-# gemini-3-flash-preview were both retired within the same year). If either
-# option stops working with a "model not found" / 404-style error, check
-# the provider's current model list and update PROVIDERS below:
-#   Gemini: ai.google.dev/gemini-api/docs/models
-#   Groq:   console.groq.com/docs/vision
 PROVIDERS: dict[str, dict[str, str]] = {
     "Google Gemini (free tier)": {"model": "gemini/gemini-3.5-flash", "env_var": "GEMINI_API_KEY"},
     "Anthropic": {"model": "claude-sonnet-5", "env_var": "ANTHROPIC_API_KEY"},
@@ -65,9 +54,8 @@ supplier/vendor/store name, and the total amount due.
 
 Important distinctions to get right:
 - The supplier is the BUSINESS that issued the invoice/receipt (the seller), not a customer \
-name, not a cashier/staff name, not a "bill to" name, and not a registered proprietor's \
-personal name if a separate trading name is shown. Prefer the trading name printed at the \
-top of the document.
+name, not a cashier/staff name, and not a registered proprietor's personal name if a separate \
+trading name is shown. Prefer the trading name printed at the top of the document.
 - The amount is the FINAL total the customer paid or owes -- not a subtotal, not a tax/VAT/GST \
 line by itself, not a discount, not a line-item price. If multiple "total" labels appear \
 (e.g. a pre-rounding subtotal vs a final rounded total), prefer the final one actually charged.
@@ -127,7 +115,6 @@ def _load_and_encode_image(path: str) -> tuple[str, str]:
 
 def _parse_json_response(text: str) -> dict:
     cleaned = text.strip()
-    # Defensive: strip markdown fences if the model adds them despite instructions.
     if cleaned.startswith("```"):
         cleaned = cleaned.split("```")[1]
         if cleaned.startswith("json"):
@@ -143,6 +130,7 @@ def _parse_json_response(text: str) -> dict:
 def _field_result(data: dict, field_name: str) -> FieldResult:
     value = data.get(field_name)
     confidence = int(data.get(f"{field_name}_confidence", 0) or 0)
+    confidence = max(0, min(100, confidence))
     reasoning = data.get(f"{field_name}_reasoning", "")
     reasons = [reasoning] if reasoning else []
     if value in (None, "null", ""):
@@ -156,17 +144,7 @@ def extract_invoice(
     provider: str = DEFAULT_PROVIDER,
     model: str | None = None,
 ) -> InvoiceExtraction:
-    """
-    Send one invoice image to a vision-capable LLM and return the
-    extracted fields.
-
-    provider: one of the keys in PROVIDERS (defaults to Gemini's free tier).
-    model: overrides the default model string for the chosen provider,
-    if you want to point at a specific/newer model.
-    api_key: required -- the key for whichever provider you selected.
-    Callers (app.py, main.py) are responsible for sourcing this from
-    an env var or Streamlit secrets matching PROVIDERS[provider]['env_var'].
-    """
+    """Send one invoice image to a vision-capable LLM and return the extracted fields."""
     if provider not in PROVIDERS:
         raise ExtractionError(
             f"Unknown provider '{provider}'. Choose one of: {', '.join(PROVIDERS)}"
@@ -224,4 +202,7 @@ def extract_invoice(
         warnings=list(data.get("warnings") or []),
         raw_text=raw_text,
     )
-    return result
+
+    # Deterministic validation is deliberately separate from the LLM so that
+    # the model cannot make an invalid value appear highly confident.
+    return validate_extraction(result)
