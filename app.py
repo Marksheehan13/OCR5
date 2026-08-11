@@ -116,6 +116,8 @@ if "results" not in st.session_state:
     st.session_state.results = []
 if "overrides" not in st.session_state:
     st.session_state.overrides = {}
+if "saved_indexes" not in st.session_state:
+    st.session_state.saved_indexes = set()
 
 uploaded_files = st.file_uploader(
     "Upload invoice photos",
@@ -132,6 +134,7 @@ process_clicked = st.button(
 if process_clicked and uploaded_files:
     st.session_state.results = []
     st.session_state.overrides = {}
+    st.session_state.saved_indexes = set()
     results: list[InvoiceExtraction] = []
     progress_area = st.container()
 
@@ -147,15 +150,7 @@ if process_clicked and uploaded_files:
             try:
                 result = extract_invoice(tmp_path, api_key=active_key, provider=provider)
                 result.source_file = uploaded_file.name
-
-                if database_configured:
-                    try:
-                        store_invoice_result(result)
-                        status.write("Saved to invoice history.")
-                    except DatabaseError as db_exc:
-                        status.write(f"Note: couldn't save to invoice history ({db_exc})")
-                else:
-                    status.write("Invoice history not configured -- result will not be saved.")
+                status.write("Extraction complete. Review the result before saving.")
 
             except ExtractionError as exc:
                 status.update(label=f"Failed: {uploaded_file.name}", state="error")
@@ -167,10 +162,26 @@ if process_clicked and uploaded_files:
                 continue
 
             results.append(result)
-            label = "Needs review" if result.needs_review else "Done"
+            label = "Needs review" if result.needs_review else "Ready for review"
             status.update(label=f"{label}: {uploaded_file.name}", state="complete")
 
     st.session_state.results = results
+
+
+def _build_edited_invoice(idx: int, result: InvoiceExtraction) -> InvoiceExtraction:
+    """Build the invoice from the values currently approved in the review UI."""
+    overrides = st.session_state.overrides.get(f"override_{idx}", {})
+    return InvoiceExtraction(
+        source_file=result.source_file,
+        date=type(result.date)(value=overrides.get("date", result.date.value or ""), confidence=result.date.effective_confidence, reasons=result.date.reasons),
+        supplier=type(result.supplier)(value=overrides.get("supplier", result.supplier.value or ""), confidence=result.supplier.effective_confidence, reasons=result.supplier.reasons),
+        amount=type(result.amount)(value=overrides.get("amount", result.amount.value or ""), confidence=result.amount.effective_confidence, reasons=result.amount.reasons),
+        currency=result.currency,
+        warnings=result.warnings,
+        raw_text=result.raw_text,
+        validation_warnings=result.validation_warnings,
+    )
+
 
 if st.session_state.results:
     st.divider()
@@ -183,8 +194,11 @@ if st.session_state.results:
         with st.container(border=True):
             header_cols = st.columns([3, 1])
             header_cols[0].markdown(f"**{result.source_file}**")
-            badge = "🟢 High confidence" if not result.needs_review else "🟡 Needs review"
-            header_cols[1].markdown(badge)
+            if idx in st.session_state.saved_indexes:
+                header_cols[1].markdown("🟢 **Saved**")
+            else:
+                badge = "🟡 Needs review" if result.needs_review else "🟢 Ready for review"
+                header_cols[1].markdown(badge)
 
             cols = st.columns(3)
             fields = [
@@ -198,13 +212,47 @@ if st.session_state.results:
                     current_value = overrides.get(key, field_result.value or "")
                     new_value = st.text_input(label, value=current_value, key=f"{key}_{idx}")
                     overrides[key] = new_value
-                    st.write(f"Confidence: {field_result.confidence}%")
+                    st.write(f"Confidence: {field_result.effective_confidence}%")
 
             overrides["approved"] = st.checkbox(
                 "Approved for export",
                 value=not result.needs_review,
                 key=f"approve_{idx}",
+                disabled=idx in st.session_state.saved_indexes,
             )
+
+    if database_configured:
+        st.subheader("Save approved invoices")
+        st.caption("Invoices are not written to Supabase until you explicitly approve and save them.")
+
+        unsaved_approved = [
+            idx
+            for idx, result in enumerate(st.session_state.results)
+            if idx not in st.session_state.saved_indexes
+            and st.session_state.overrides.get(f"override_{idx}", {}).get("approved", not result.needs_review)
+        ]
+
+        if st.button(
+            f"💾 Save {len(unsaved_approved)} approved invoice(s) to history",
+            type="primary",
+            disabled=not unsaved_approved,
+        ):
+            save_errors = []
+            for idx in unsaved_approved:
+                edited = _build_edited_invoice(idx, st.session_state.results[idx])
+                try:
+                    store_invoice_result(edited)
+                    st.session_state.saved_indexes.add(idx)
+                except DatabaseError as exc:
+                    save_errors.append(f"{edited.source_file}: {exc}")
+
+            if save_errors:
+                st.error("Some invoices could not be saved:\n" + "\n".join(save_errors))
+            else:
+                st.success(f"Saved {len(unsaved_approved)} approved invoice(s) to invoice history.")
+            st.rerun()
+    else:
+        st.info("Connect Supabase to save approved invoices to invoice history. Extraction and Excel export still work without it.")
 
 if st.session_state.results:
     st.divider()
@@ -212,17 +260,8 @@ if st.session_state.results:
 
     for idx, result in enumerate(st.session_state.results):
         overrides = st.session_state.overrides.get(f"override_{idx}", {})
-        if overrides.get("approved", True):
-            edited = InvoiceExtraction(
-                source_file=result.source_file,
-                date=type(result.date)(value=overrides.get("date"), confidence=result.date.confidence, reasons=result.date.reasons),
-                supplier=type(result.supplier)(value=overrides.get("supplier"), confidence=result.supplier.confidence, reasons=result.supplier.reasons),
-                amount=type(result.amount)(value=overrides.get("amount"), confidence=result.amount.confidence, reasons=result.amount.reasons),
-                currency=result.currency,
-                warnings=result.warnings,
-                raw_text=result.raw_text,
-            )
-            export_rows.append(edited)
+        if overrides.get("approved", not result.needs_review):
+            export_rows.append(_build_edited_invoice(idx, result))
 
     st.caption(f"{len(export_rows)} invoice(s) ready for export.")
     preview_df = pd.DataFrame([
