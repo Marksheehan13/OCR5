@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>OCR5 — UI Prototype</title>
+  <link rel="stylesheet" href="design-tokens.css">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--ocr5-bg); color: var(--ocr5-text); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .shell { min-height: 100vh; display: grid; grid-template-columns: 230px 1fr; }
+    .sidebar { background: var(--ocr5-sidebar); color: #f5f7fa; padding: 22px 14px; display: flex; flex-direction: column; gap: 28px; }
+    .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px; font-weight: 750; letter-spacing: -.02em; }
+    .brand-mark { width: 30px; height: 30px; border-radius: 9px; background: var(--ocr5-primary); display: grid; place-items: center; font-size: 13px; }
+    nav { display: grid; gap: 4px; }
+    nav a { color: #aeb4c0; text-decoration: none; padding: 10px 11px; border-radius: 9px; font-size: 14px; }
+    nav a.active { color: white; background: var(--ocr5-sidebar-surface); }
+    nav .section { margin: 16px 11px 6px; color: #656c78; text-transform: uppercase; font-size: 10px; font-weight: 700; letter-spacing: .12em; }
+    main { padding: 34px clamp(24px, 4vw, 56px); max-width: 1500px; width: 100%; margin: 0 auto; }
+    .top { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+    h1 { margin: 0 0 6px; font-size: clamp(28px, 3vw, 38px); letter-spacing: -.04em; }
+    .subtitle { color: var(--ocr5-text-muted); font-size: 14px; }
+    .button { border: 0; border-radius: 10px; padding: 11px 16px; background: var(--ocr5-primary); color: white; font-weight: 650; cursor: pointer; }
+    .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 18px; }
+    .kpi { padding: 20px; }
+    .label { color: var(--ocr5-text-muted); font-size: 12px; font-weight: 600; }
+    .value { margin-top: 8px; font-size: 27px; font-weight: 730; letter-spacing: -.035em; }
+    .delta { margin-top: 7px; font-size: 12px; color: var(--ocr5-success); }
+    .grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, .8fr); gap: 18px; }
+    .card { padding: 22px; }
+    .card-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+    .card-title h2 { margin: 0; font-size: 15px; letter-spacing: -.01em; }
+    .chart { height: 220px; display: flex; align-items: flex-end; gap: 10px; padding-top: 20px; }
+    .bar { flex: 1; background: #e8e9ff; border-radius: 7px 7px 3px 3px; min-height: 14px; }
+    .bar.accent { background: var(--ocr5-primary); }
+    .attention { display: grid; gap: 10px; }
+    .attention-item { padding: 14px; border: 1px solid var(--ocr5-border); border-radius: 11px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .attention-item strong { display: block; font-size: 13px; }
+    .attention-item span { color: var(--ocr5-text-muted); font-size: 11px; display: block; margin-top: 4px; }
+    .badge { padding: 5px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; white-space: nowrap; }
+    .badge.warning { color: var(--ocr5-warning); background: #fff7ed; }
+    .badge.ai { color: var(--ocr5-primary); background: #efefff; }
+    .table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .table th { color: var(--ocr5-text-muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; text-align: left; padding: 10px 0; border-bottom: 1px solid var(--ocr5-border); }
+    .table td { padding: 13px 0; border-bottom: 1px solid var(--ocr5-border); }
+    .table tr:last-child td { border-bottom: 0; }
+    @media (max-width: 1050px) { .kpis { grid-template-columns: repeat(2, 1fr); } .grid { grid-template-columns: 1fr; } }
+    @media (max-width: 700px) { .shell { grid-template-columns: 1fr; } .sidebar { display: none; } main { padding: 24px 16px; } .kpis { grid-template-columns: 1fr; } .top { align-items: flex-start; flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">O5</div> OCR5</div>
+      <nav>
+        <a class="active" href="#">Dashboard</a>
+        <a href="#">Invoices</a>
+        <a href="#">Expenses</a>
+        <a href="#">Suppliers</a>
+        <div class="section">Analyse</div>
+        <a href="#">Analytics</a>
+        <a href="#">Reports</a>
+        <div class="section">System</div>
+        <a href="#">Settings</a>
+      </nav>
+    </aside>
+    <main>
+      <div class="top">
+        <div><h1>Good morning</h1><div class="subtitle">Here is what needs your attention today.</div></div>
+        <button class="button">+ Upload invoices</button>
+      </div>
+
+      <section class="kpis">
+        <div class="ocr5-surface kpi"><div class="label">Total spend</div><div class="value">€24,820</div><div class="delta">↓ 4.2% vs last month</div></div>
+        <div class="ocr5-surface kpi"><div class="label">VAT tracked</div><div class="value">€3,240</div><div class="delta">Across 184 invoices</div></div>
+        <div class="ocr5-surface kpi"><div class="label">Invoices processed</div><div class="value">247</div><div class="delta">+31 this month</div></div>
+        <div class="ocr5-surface kpi"><div class="label">AI confidence</div><div class="value">94%</div><div class="delta">↑ 2.1% vs last month</div></div>
+      </section>
+
+      <section class="grid">
+        <div class="ocr5-surface card">
+          <div class="card-title"><h2>Spend over time</h2><span class="label">Last 7 months</span></div>
+          <div class="chart">
+            <div class="bar" style="height:45%"></div><div class="bar" style="height:62%"></div><div class="bar" style="height:52%"></div><div class="bar" style="height:76%"></div><div class="bar" style="height:68%"></div><div class="bar accent" style="height:88%"></div><div class="bar" style="height:71%"></div>
+          </div>
+        </div>
+        <div class="ocr5-surface card">
+          <div class="card-title"><h2>Needs attention</h2><span class="badge ai">AI</span></div>
+          <div class="attention">
+            <div class="attention-item"><div><strong>2 invoices need review</strong><span>Confidence below 90%</span></div><span class="badge warning">Review</span></div>
+            <div class="attention-item"><div><strong>Possible duplicate</strong><span>€184.20 · 94% match</span></div><span class="badge warning">Review</span></div>
+            <div class="attention-item"><div><strong>VAT discrepancy</strong><span>Expected €12.65 · found €12.40</span></div><span class="badge warning">Review</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="ocr5-surface card" style="margin-top:18px">
+        <div class="card-title"><h2>Recent invoices</h2><span class="label">View all →</span></div>
+        <table class="table">
+          <thead><tr><th>Invoice</th><th>Supplier</th><th>Date</th><th>Status</th><th>Total</th></tr></thead>
+          <tbody>
+            <tr><td>INV-1024</td><td>Lidl Ireland</td><td>11 Aug 2026</td><td><span class="badge ai">AI verified</span></td><td>€84.20</td></tr>
+            <tr><td>INV-1023</td><td>Vodafone</td><td>10 Aug 2026</td><td><span class="badge ai">Saved</span></td><td>€65.00</td></tr>
+            <tr><td>INV-1022</td><td>Tesco Ireland</td><td>09 Aug 2026</td><td><span class="badge warning">Needs review</span></td><td>€142.30</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
