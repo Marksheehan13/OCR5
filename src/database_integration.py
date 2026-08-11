@@ -1,73 +1,55 @@
-"""
-database_integration.py
-
-Connects OCR5 extraction results with the SQLite memory database.
-
-After Claude extracts invoice information,
-this module stores the result permanently.
-"""
+"""Persist reviewed OCR5 invoice results and their source images."""
 
 from __future__ import annotations
 
 from .database import save_invoice
 from .models import InvoiceExtraction
+from .storage import StorageError, upload_invoice_image
 
 
 def calculate_overall_confidence(invoice: InvoiceExtraction) -> int:
-    """
-    Calculates an overall confidence score
-    from extracted fields.
-    """
-
-    scores = []
-
-    if invoice.date:
-        scores.append(invoice.date.confidence)
-
-    if invoice.supplier:
-        scores.append(invoice.supplier.confidence)
-
-    if invoice.amount:
-        scores.append(invoice.amount.confidence)
-
-    if not scores:
-        return 0
-
-    return round(sum(scores) / len(scores))
+    scores = [
+        invoice.date.effective_confidence,
+        invoice.supplier.effective_confidence,
+        invoice.amount.effective_confidence,
+    ]
+    return round(sum(scores) / len(scores)) if scores else 0
 
 
 def store_invoice_result(
     invoice: InvoiceExtraction,
+    image_bytes: bytes | None = None,
+    mime_type: str = "application/octet-stream",
 ):
-    """
-    Saves an OCR5 extraction result into the database.
-    """
-
+    """Store an approved invoice and, when supplied, its actual source image."""
     amount = None
-
     if invoice.amount.value:
         try:
             amount = float(invoice.amount.value)
         except ValueError:
             amount = None
 
+    image_path = invoice.source_file
+    if image_bytes is not None:
+        try:
+            image_path = upload_invoice_image(image_bytes, invoice.source_file, mime_type)
+        except StorageError as exc:
+            raise StorageError(f"Invoice image could not be stored: {exc}") from exc
 
     confidence = calculate_overall_confidence(invoice)
-
-
     save_invoice(
         supplier=invoice.supplier.value,
         invoice_date=invoice.date.value,
         amount=amount,
         currency=invoice.currency,
         confidence=confidence,
-        image_path=invoice.source_file,
+        image_path=image_path,
     )
-
 
     return {
         "status": "saved",
         "supplier": invoice.supplier.value,
         "amount": amount,
         "confidence": confidence,
+        "image_path": image_path,
     }
