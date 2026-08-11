@@ -6,3 +6,6 @@ __pycache__/
 .streamlit/
 *.egg-info/
 .DS_Store
+.env
+.env.*
+!.env.example
