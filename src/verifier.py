@@ -1,12 +1,4 @@
-"""Second-pass verification of LLM-extracted invoice fields.
-
-The verifier receives the original invoice image and the first-pass extraction.
-It independently checks the three extracted fields and can return a corrected
-value when the image clearly contradicts the first pass.
-
-Verification is intentionally separate from extraction so that the second model
-call acts as an independent critic rather than simply re-running the same prompt.
-"""
+"""Second-pass verification of LLM-extracted invoice fields."""
 
 from __future__ import annotations
 
@@ -14,7 +6,6 @@ import json
 
 import litellm
 
-from .llm_extractor import _load_and_encode_image, ExtractionError
 from .models import InvoiceExtraction
 
 VERIFICATION_THRESHOLD = 90
@@ -66,9 +57,9 @@ def _parse_verification(text: str) -> dict:
     try:
         data = json.loads(cleaned.strip())
     except json.JSONDecodeError as exc:
-        raise ExtractionError(f"Verifier response wasn't valid JSON: {exc}") from exc
+        raise RuntimeError(f"Verifier response wasn't valid JSON: {exc}") from exc
     if not isinstance(data, dict):
-        raise ExtractionError("Verifier returned an unexpected response shape.")
+        raise RuntimeError("Verifier returned an unexpected response shape.")
     return data
 
 
@@ -87,7 +78,15 @@ def verify_extraction(
     if not _verification_should_run(result):
         return result
 
-    image_data, media_type = _load_and_encode_image(image_path)
+    # Local import avoids a module-level cycle: llm_extractor imports this verifier.
+    from .llm_extractor import _load_and_encode_image
+
+    try:
+        image_data, media_type = _load_and_encode_image(image_path)
+    except Exception as exc:
+        result.warnings.append(f"Verification could not read the invoice image: {exc}")
+        return result
+
     first_pass = {
         "date": result.date.value,
         "supplier": result.supplier.value,
@@ -117,11 +116,10 @@ def verify_extraction(
                 },
             ],
         )
-    except Exception as exc:  # noqa: BLE001 - verifier failure should not destroy extraction
+        data = _parse_verification(response.choices[0].message.content or "")
+    except Exception as exc:  # noqa: BLE001 - verifier failure must not destroy extraction
         result.warnings.append(f"Verification could not be completed: {exc}")
         return result
-
-    data = _parse_verification(response.choices[0].message.content or "")
 
     corrections = []
     for field_name in ("date", "supplier", "amount"):
@@ -133,14 +131,18 @@ def verify_extraction(
         if status == "corrected" and verified_value not in (None, ""):
             old_value = field.value
             field.value = str(verified_value)
-            field.confidence = max(field.confidence, 90)
+            field.confidence = 90
             field.validation_confidence = None
             field.validation_issues = []
-            field.reasons.append(f"Second-pass verifier corrected the value: {reason or 'image evidence'}")
+            field.reasons.append(
+                f"Second-pass verifier corrected the value: {reason or 'image evidence'}"
+            )
             corrections.append(f"{field_name}: {old_value!r} → {verified_value!r}")
         elif status == "confirmed":
-            field.confidence = max(field.confidence, VERIFICATION_THRESHOLD)
-            field.reasons.append(f"Second-pass verifier confirmed the value: {reason or 'image evidence'}")
+            field.confidence = max(field.effective_confidence, VERIFICATION_THRESHOLD)
+            field.reasons.append(
+                f"Second-pass verifier confirmed the value: {reason or 'image evidence'}"
+            )
         elif status == "uncertain":
             field.confidence = min(field.effective_confidence, 69)
             field.validation_confidence = min(field.effective_confidence, 69)
@@ -153,7 +155,10 @@ def verify_extraction(
 
     if corrections:
         result.warnings.append("Second-pass verification made corrections: " + "; ".join(corrections))
-    elif any(data.get(f"{name}_status") == "uncertain" for name in ("date", "supplier", "amount", "currency")):
+    elif any(
+        data.get(f"{name}_status") == "uncertain"
+        for name in ("date", "supplier", "amount", "currency")
+    ):
         result.warnings.append("Second-pass verification could not confirm every field.")
 
     return result
