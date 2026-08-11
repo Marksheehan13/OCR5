@@ -46,3 +46,20 @@ def upload_invoice_image(
         raise StorageError(f"Could not upload invoice image: {exc}") from exc
 
     return object_path
+
+
+def create_invoice_image_url(image_path: str, expires_in: int = 3600) -> str:
+    """Create a temporary signed URL for a private invoice image."""
+    if not image_path or image_path.startswith("http"):
+        return image_path
+
+    try:
+        client = _get_client()
+        response = client.storage.from_(BUCKET_NAME).create_signed_url(
+            image_path, expires_in
+        )
+        if isinstance(response, dict):
+            return response.get("signedURL") or response.get("signedUrl") or ""
+        return ""
+    except Exception as exc:  # noqa: BLE001
+        raise StorageError(f"Could not create invoice image URL: {exc}") from exc
