@@ -8,6 +8,7 @@ import litellm
 
 from .models import InvoiceExtraction
 
+# Clean results at or above this threshold avoid a second API call.
 VERIFICATION_THRESHOLD = 90
 
 VERIFIER_PROMPT = """You are an independent invoice verification system.
@@ -78,7 +79,7 @@ def verify_extraction(
     if not _verification_should_run(result):
         return result
 
-    # Local import avoids a module-level cycle: llm_extractor imports this verifier.
+    # Local import avoids a module-level cycle: verifier reuses the extractor's image helper.
     from .llm_extractor import _load_and_encode_image
 
     try:
