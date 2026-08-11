@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .database import save_invoice
+from .database import DatabaseError, save_invoice
 from .models import InvoiceExtraction
 from .storage import StorageError, upload_invoice_image
 
@@ -34,7 +34,7 @@ def store_invoice_result(
         try:
             image_path = upload_invoice_image(image_bytes, invoice.source_file, mime_type)
         except StorageError as exc:
-            raise StorageError(f"Invoice image could not be stored: {exc}") from exc
+            raise DatabaseError(f"Invoice image could not be stored: {exc}") from exc
 
     confidence = calculate_overall_confidence(invoice)
     save_invoice(
