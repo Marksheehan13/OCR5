@@ -13,19 +13,31 @@ from dataclasses import dataclass, field
 
 @dataclass
 class FieldResult:
-    """The extracted value for one field, with the model's own confidence and reasoning."""
+    """An extracted value with model confidence and independent validation."""
 
     value: str | None
-    confidence: int             # 0-100, self-reported by the model
+    confidence: int             # raw, self-reported model confidence (0-100)
     reasons: list[str] = field(default_factory=list)
+    validation_confidence: int | None = None
+    validation_issues: list[str] = field(default_factory=list)
+
+    @property
+    def effective_confidence(self) -> int:
+        """Confidence after deterministic validation has been applied."""
+        if self.validation_confidence is None:
+            return self.confidence
+        return min(self.confidence, self.validation_confidence)
 
     @property
     def level(self) -> str:
+        confidence = self.effective_confidence
         if self.value is None:
             return "review"
-        if self.confidence >= 90:
+        if self.validation_issues:
+            return "review"
+        if confidence >= 90:
             return "high"
-        if self.confidence >= 70:
+        if confidence >= 70:
             return "medium"
         return "review"
 
@@ -41,6 +53,7 @@ class InvoiceExtraction:
     currency: str = "EUR"
     warnings: list[str] = field(default_factory=list)
     raw_text: str = ""          # the model's full response, kept for debugging/export
+    validation_warnings: list[str] = field(default_factory=list)
 
     @property
     def needs_review(self) -> bool:
@@ -53,5 +66,9 @@ class InvoiceExtraction:
 
     @property
     def overall_confidence(self) -> int:
-        vals = [self.date.confidence, self.supplier.confidence, self.amount.confidence]
+        vals = [
+            self.date.effective_confidence,
+            self.supplier.effective_confidence,
+            self.amount.effective_confidence,
+        ]
         return round(sum(vals) / len(vals))
