@@ -82,13 +82,14 @@ def validate_currency(currency: str | None) -> ValidationResult:
 
 
 def _apply_validation(field: FieldResult, result: ValidationResult) -> None:
-    """Attach validation information and cap, rather than replace, model confidence."""
+    """Attach validation information and make the displayed confidence conservative."""
     field.validation_confidence = min(field.confidence, result.confidence_cap)
     field.validation_issues = result.issues
+    field.confidence = field.validation_confidence
 
 
 def validate_extraction(result: InvoiceExtraction) -> InvoiceExtraction:
-    """Run deterministic checks and update effective confidence on the result."""
+    """Run deterministic checks and update the result's effective confidence."""
     _apply_validation(result.date, validate_date(result.date))
     _apply_validation(result.supplier, validate_supplier(result.supplier))
     _apply_validation(result.amount, validate_amount(result.amount))
