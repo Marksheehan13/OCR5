@@ -1,5 +1,4 @@
 """Independent second-pass verification for invoice extraction."""
-
 from __future__ import annotations
 import json
 import litellm
