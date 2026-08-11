@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
-from datetime import datetime
 
 from supabase import create_client, Client
 
@@ -21,10 +20,7 @@ def _get_client() -> Client:
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_KEY")
     if not url or not key:
-        raise DatabaseError(
-            "SUPABASE_URL and SUPABASE_KEY must be set (environment variables for the "
-            "CLI, or Streamlit secrets for the web UI) to use invoice history storage."
-        )
+        raise DatabaseError("SUPABASE_URL and SUPABASE_KEY must be set to use invoice history storage.")
     return create_client(url, key)
 
 
@@ -63,16 +59,12 @@ def save_invoice_line_items(invoice_id: int, line_items) -> int:
 
 
 def get_invoice_line_items(invoice_id: int) -> list[dict]:
-    response = _get_client().table("invoice_line_items").select(
-        "id,description,quantity,unit_price,vat_rate,line_total,confidence,created_at"
-    ).eq("invoice_id", invoice_id).order("id").execute()
+    response = _get_client().table("invoice_line_items").select("id,description,quantity,unit_price,vat_rate,line_total,confidence,created_at").eq("invoice_id", invoice_id).order("id").execute()
     return response.data or []
 
 
 def get_all_invoice_line_items() -> list[dict]:
-    response = _get_client().table("invoice_line_items").select(
-        "id,invoice_id,description,quantity,unit_price,vat_rate,line_total,confidence,created_at"
-    ).order("created_at", desc=True).execute()
+    response = _get_client().table("invoice_line_items").select("id,invoice_id,description,quantity,unit_price,vat_rate,line_total,confidence,created_at").order("created_at", desc=True).execute()
     return response.data or []
 
 
@@ -82,30 +74,66 @@ def get_invoice_analytics() -> dict:
     items = get_all_invoice_line_items()
     valid_amounts = [float(row[3]) for row in invoices if row[3] is not None]
     valid_vat = [float(row[10]) for row in invoices if row[10] is not None]
-
     by_supplier = defaultdict(float)
     by_month = defaultdict(float)
     for row in invoices:
-        amount = row[3]
-        if amount is None:
+        if row[3] is None:
             continue
-        amount = float(amount)
         supplier = row[1] or "Unknown supplier"
-        by_supplier[supplier] += amount
-        date_value = row[2]
-        if date_value:
-            month = str(date_value)[:7]
-            by_month[month] += amount
-
+        by_supplier[supplier] += float(row[3])
+        if row[2]:
+            by_month[str(row[2])[:7]] += float(row[3])
     return {
-        "invoice_count": len(invoices),
-        "line_item_count": len(items),
-        "total_spend": sum(valid_amounts),
-        "total_vat": sum(valid_vat),
-        "average_invoice_value": sum(valid_amounts) / len(valid_amounts) if valid_amounts else 0.0,
+        "invoice_count": len(invoices), "line_item_count": len(items), "total_spend": sum(valid_amounts),
+        "total_vat": sum(valid_vat), "average_invoice_value": sum(valid_amounts) / len(valid_amounts) if valid_amounts else 0.0,
         "spend_by_supplier": dict(sorted(by_supplier.items(), key=lambda x: x[1], reverse=True)),
         "spend_by_month": dict(sorted(by_month.items())),
     }
+
+
+def get_supplier_item_analysis() -> list[dict]:
+    """Aggregate purchased items by normalized description and supplier."""
+    invoices = {row[0]: (row[1] or "Unknown supplier") for row in get_all_invoices()}
+    groups = {}
+    for item in get_all_invoice_line_items():
+        supplier = invoices.get(item["invoice_id"], "Unknown supplier")
+        description = " ".join(str(item.get("description") or "").lower().split())
+        if not description:
+            continue
+        key = (supplier, description)
+        group = groups.setdefault(key, {"supplier": supplier, "description": str(item.get("description") or "").strip(), "quantity": 0.0, "line_count": 0, "total_spend": 0.0, "unit_prices": []})
+        if item.get("quantity") is not None:
+            group["quantity"] += float(item["quantity"])
+        if item.get("line_total") is not None:
+            group["total_spend"] += float(item["line_total"])
+        if item.get("unit_price") is not None:
+            group["unit_prices"].append(float(item["unit_price"]))
+        group["line_count"] += 1
+    results = []
+    for group in groups.values():
+        prices = group.pop("unit_prices")
+        group["average_unit_price"] = sum(prices) / len(prices) if prices else None
+        results.append(group)
+    return sorted(results, key=lambda x: x["total_spend"], reverse=True)
+
+
+def get_item_price_comparisons() -> list[dict]:
+    """Compare average unit prices for matching items across suppliers."""
+    analysis = get_supplier_item_analysis()
+    items = defaultdict(list)
+    for row in analysis:
+        if row["average_unit_price"] is not None:
+            items[row["description"].lower()].append(row)
+    comparisons = []
+    for suppliers in items.values():
+        if len(suppliers) < 2:
+            continue
+        prices = [row["average_unit_price"] for row in suppliers]
+        comparisons.append({
+            "description": suppliers[0]["description"], "suppliers": suppliers,
+            "lowest_price": min(prices), "highest_price": max(prices), "price_difference": max(prices) - min(prices),
+        })
+    return sorted(comparisons, key=lambda x: x["price_difference"], reverse=True)
 
 
 _COLUMNS = "id,supplier,invoice_date,amount,currency,confidence,image_path,created_at,invoice_number,subtotal,vat_amount,vat_rate"
