@@ -1,8 +1,4 @@
-"""OCR5 Streamlit front end.
-
-First run: enter credentials once and click Save settings.
-Later runs: OCR5 loads local settings from .env automatically.
-"""
+"""OCR5 Streamlit front end."""
 
 from __future__ import annotations
 
@@ -28,7 +24,7 @@ initialise_database()
 
 st.set_page_config(page_title="OCR5 - LLM Invoice Extractor", page_icon="🧠", layout="wide")
 st.title("🧠 OCR5: LLM-Based Invoice Extraction")
-st.caption("Upload invoice photos or receipts. OCR5 extracts the date, supplier and total amount, verifies the result, checks for duplicates, lets you review it, and exports approved invoices to Excel.")
+st.caption("Upload invoice photos or receipts. OCR5 extracts, verifies and reviews invoice data before saving approved records to Supabase and Excel.")
 
 
 def _secret(name: str) -> str:
@@ -45,22 +41,10 @@ if saved_provider not in PROVIDERS:
 with st.sidebar:
     st.subheader("OCR5 Settings")
     provider_names = list(PROVIDERS.keys())
-    provider = st.selectbox(
-        "AI provider",
-        options=provider_names,
-        index=provider_names.index(saved_provider),
-        help="Your selected provider is remembered locally after you save settings.",
-    )
-
+    provider = st.selectbox("AI provider", options=provider_names, index=provider_names.index(saved_provider))
     env_var_name = PROVIDERS[provider]["env_var"]
-    saved_api_key = get_setting("OCR5_API_KEY")
-    if not saved_api_key:
-        saved_api_key = _secret(env_var_name) or get_setting(env_var_name)
-
-    api_key_input = st.text_input(
-        "AI API key", value=saved_api_key, type="password",
-        help="Stored locally in .env when you click Save settings. The real .env file is ignored by Git.",
-    )
+    saved_api_key = get_setting("OCR5_API_KEY") or _secret(env_var_name) or get_setting(env_var_name)
+    api_key_input = st.text_input("AI API key", value=saved_api_key, type="password")
 
     st.subheader("Invoice History")
     saved_supabase_url = get_setting("SUPABASE_URL") or _secret("SUPABASE_URL")
@@ -107,12 +91,7 @@ if "duplicate_confirmations" not in st.session_state:
 if "invoice_history_snapshot" not in st.session_state:
     st.session_state.invoice_history_snapshot = []
 
-uploaded_files = st.file_uploader(
-    "Upload invoice photos",
-    type=["jpg", "jpeg", "png", "heic", "heif", "bmp", "tiff", "webp"],
-    accept_multiple_files=True,
-)
-
+uploaded_files = st.file_uploader("Upload invoice photos", type=["jpg", "jpeg", "png", "heic", "heif", "bmp", "tiff", "webp"], accept_multiple_files=True)
 process_clicked = st.button("Process invoices", type="primary", disabled=not uploaded_files or not active_key)
 
 if process_clicked and uploaded_files:
@@ -132,17 +111,14 @@ if process_clicked and uploaded_files:
 
     results: list[InvoiceExtraction] = []
     progress_area = st.container()
-
     for uploaded_file in uploaded_files:
         with progress_area:
             status = st.status(f"Processing {uploaded_file.name}...", expanded=True)
             status.write(f"Sending image to {provider}...")
             image_bytes = uploaded_file.getvalue()
-
             with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp:
                 tmp.write(image_bytes)
                 tmp_path = tmp.name
-
             try:
                 result = extract_invoice(tmp_path, api_key=active_key, provider=provider)
                 result.source_file = uploaded_file.name
@@ -151,31 +127,31 @@ if process_clicked and uploaded_files:
                 status.update(label=f"Failed: {uploaded_file.name}", state="error")
                 status.write(f"Error: {exc}")
                 continue
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 status.update(label=f"Failed: {uploaded_file.name}", state="error")
                 status.write(f"Unexpected error: {exc}")
                 continue
-
             result_index = len(results)
             results.append(result)
-            st.session_state.source_images[result_index] = {
-                "bytes": image_bytes,
-                "mime_type": uploaded_file.type or "application/octet-stream",
-            }
+            st.session_state.source_images[result_index] = {"bytes": image_bytes, "mime_type": uploaded_file.type or "application/octet-stream"}
             label = "Needs review" if result.needs_review else "Ready for review"
             status.update(label=f"{label}: {uploaded_file.name}", state="complete")
-
     st.session_state.results = results
 
 
 def _build_edited_invoice(idx: int, result: InvoiceExtraction) -> InvoiceExtraction:
     overrides = st.session_state.overrides.get(f"override_{idx}", {})
+    field = type(result.date)
     return InvoiceExtraction(
         source_file=result.source_file,
-        date=type(result.date)(value=overrides.get("date", result.date.value or ""), confidence=result.date.effective_confidence, reasons=result.date.reasons),
-        supplier=type(result.supplier)(value=overrides.get("supplier", result.supplier.value or ""), confidence=result.supplier.effective_confidence, reasons=result.supplier.reasons),
-        amount=type(result.amount)(value=overrides.get("amount", result.amount.value or ""), confidence=result.amount.effective_confidence, reasons=result.amount.reasons),
-        currency=result.currency,
+        date=field(value=overrides.get("date", result.date.value or ""), confidence=result.date.effective_confidence, reasons=result.date.reasons),
+        supplier=field(value=overrides.get("supplier", result.supplier.value or ""), confidence=result.supplier.effective_confidence, reasons=result.supplier.reasons),
+        amount=field(value=overrides.get("amount", result.amount.value or ""), confidence=result.amount.effective_confidence, reasons=result.amount.reasons),
+        currency=overrides.get("currency", result.currency),
+        invoice_number=field(value=overrides.get("invoice_number", result.invoice_number.value or ""), confidence=result.invoice_number.effective_confidence, reasons=result.invoice_number.reasons),
+        subtotal=field(value=overrides.get("subtotal", result.subtotal.value or ""), confidence=result.subtotal.effective_confidence, reasons=result.subtotal.reasons),
+        vat_amount=field(value=overrides.get("vat_amount", result.vat_amount.value or ""), confidence=result.vat_amount.effective_confidence, reasons=result.vat_amount.reasons),
+        vat_rate=field(value=overrides.get("vat_rate", result.vat_rate.value or ""), confidence=result.vat_rate.effective_confidence, reasons=result.vat_rate.reasons),
         warnings=result.warnings,
         raw_text=result.raw_text,
         validation_warnings=result.validation_warnings,
@@ -185,23 +161,15 @@ def _build_edited_invoice(idx: int, result: InvoiceExtraction) -> InvoiceExtract
 def _get_duplicate_matches(idx: int, invoice: InvoiceExtraction) -> list[DuplicateMatch]:
     if not database_configured:
         return []
-    return find_duplicate_matches(
-        invoice.supplier.value,
-        invoice.date.value,
-        invoice.amount.value,
-        invoice.currency,
-        st.session_state.invoice_history_snapshot,
-    )
+    return find_duplicate_matches(invoice.supplier.value, invoice.date.value, invoice.amount.value, invoice.currency, st.session_state.invoice_history_snapshot)
 
 
 if st.session_state.results:
     st.divider()
     st.subheader("Results")
-
     for idx, result in enumerate(st.session_state.results):
         override_key = f"override_{idx}"
         overrides = st.session_state.overrides.setdefault(override_key, {})
-
         with st.container(border=True):
             header_cols = st.columns([3, 1])
             header_cols[0].markdown(f"**{result.source_file}**")
@@ -211,9 +179,33 @@ if st.session_state.results:
                 badge = "🟡 Needs review" if result.needs_review else "🟢 Ready for review"
                 header_cols[1].markdown(badge)
 
-            cols = st.columns(3)
-            fields = [("Supplier", "supplier", result.supplier), ("Date", "date", result.date), ("Amount", "amount", result.amount)]
+            cols = st.columns(4)
+            fields = [
+                ("Supplier", "supplier", result.supplier),
+                ("Invoice number", "invoice_number", result.invoice_number),
+                ("Date", "date", result.date),
+                ("Currency", "currency", None),
+            ]
             for col, (label, key, field_result) in zip(cols, fields):
+                with col:
+                    if key == "currency":
+                        new_value = st.text_input(label, value=overrides.get(key, result.currency), key=f"{key}_{idx}")
+                        overrides[key] = new_value
+                        st.caption("Currency code")
+                    else:
+                        current_value = overrides.get(key, field_result.value or "")
+                        new_value = st.text_input(label, value=current_value, key=f"{key}_{idx}")
+                        overrides[key] = new_value
+                        st.write(f"Confidence: {field_result.effective_confidence}%")
+
+            cols2 = st.columns(4)
+            financial_fields = [
+                ("Subtotal", "subtotal", result.subtotal),
+                ("VAT amount", "vat_amount", result.vat_amount),
+                ("VAT rate %", "vat_rate", result.vat_rate),
+                ("Final total", "amount", result.amount),
+            ]
+            for col, (label, key, field_result) in zip(cols2, financial_fields):
                 with col:
                     current_value = overrides.get(key, field_result.value or "")
                     new_value = st.text_input(label, value=current_value, key=f"{key}_{idx}")
@@ -224,26 +216,15 @@ if st.session_state.results:
             duplicate_matches = _get_duplicate_matches(idx, edited_for_duplicate_check)
             if duplicate_matches:
                 best = duplicate_matches[0]
-                st.warning(
-                    f"⚠️ Possible duplicate: invoice #{best.invoice_id} already stored with "
-                    f"{best.supplier} · {best.invoice_date} · {best.currency} {best.amount:.2f}."
-                )
+                st.warning(f"⚠️ Possible duplicate: invoice #{best.invoice_id} already stored with {best.supplier} · {best.invoice_date} · {best.currency} {best.amount:.2f}.")
                 st.caption("Matched on supplier, date, amount and currency. OCR5 will not reject it automatically.")
-                confirmed = st.checkbox(
-                    "I confirm this is not a duplicate and want to approve it",
-                    value=idx in st.session_state.duplicate_confirmations,
-                    key=f"duplicate_confirm_{idx}",
-                    disabled=idx in st.session_state.saved_indexes,
-                )
+                confirmed = st.checkbox("I confirm this is not a duplicate and want to approve it", value=idx in st.session_state.duplicate_confirmations, key=f"duplicate_confirm_{idx}", disabled=idx in st.session_state.saved_indexes)
                 if confirmed:
                     st.session_state.duplicate_confirmations.add(idx)
                 else:
                     st.session_state.duplicate_confirmations.discard(idx)
 
-            overrides["approved"] = st.checkbox(
-                "Approved for export", value=not result.needs_review,
-                key=f"approve_{idx}", disabled=idx in st.session_state.saved_indexes,
-            )
+            overrides["approved"] = st.checkbox("Approved for export", value=not result.needs_review, key=f"approve_{idx}", disabled=idx in st.session_state.saved_indexes)
 
     if database_configured:
         st.subheader("Save approved invoices")
@@ -272,15 +253,10 @@ if st.session_state.results:
                 edited = _build_edited_invoice(idx, st.session_state.results[idx])
                 source = st.session_state.source_images.get(idx, {})
                 try:
-                    store_invoice_result(
-                        edited,
-                        image_bytes=source.get("bytes"),
-                        mime_type=source.get("mime_type", "application/octet-stream"),
-                    )
+                    store_invoice_result(edited, image_bytes=source.get("bytes"), mime_type=source.get("mime_type", "application/octet-stream"))
                     st.session_state.saved_indexes.add(idx)
                 except DatabaseError as exc:
                     save_errors.append(f"{edited.source_file}: {exc}")
-
             if save_errors:
                 st.error("Some invoices could not be saved:\n" + "\n".join(save_errors))
             else:
@@ -299,7 +275,17 @@ if st.session_state.results:
 
     st.caption(f"{len(export_rows)} invoice(s) ready for export.")
     preview_df = pd.DataFrame([
-        {"Date": r.date.value, "Supplier": r.supplier.value, "Amount": r.amount.value, "Confidence": r.overall_confidence}
+        {
+            "Invoice number": r.invoice_number.value,
+            "Date": r.date.value,
+            "Supplier": r.supplier.value,
+            "Subtotal": r.subtotal.value,
+            "VAT": r.vat_amount.value,
+            "VAT rate %": r.vat_rate.value,
+            "Total": r.amount.value,
+            "Currency": r.currency,
+            "Confidence": r.overall_confidence,
+        }
         for r in export_rows
     ])
     if not preview_df.empty:
