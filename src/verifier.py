@@ -10,23 +10,10 @@ from .models import InvoiceExtraction
 
 VERIFICATION_THRESHOLD = 90
 
-VERIFIER_PROMPT = """You are an independent invoice verification system.
-
-You will receive an invoice/receipt image and the first-pass extraction below.
-Do NOT assume the first-pass values are correct. Inspect the original image and independently verify each field.
-
+VERIFIER_PROMPT = """You are an independent invoice verification system. Inspect the invoice image and independently verify the first-pass extraction.
 Verify date (issue/transaction date), supplier (issuing business), amount (final total), and currency.
-
-For every field return: confirmed, corrected, or uncertain. Only provide a corrected value when clearly readable. Do not guess.
-
-Return ONLY JSON:
-{
-  "date_status": "confirmed|corrected|uncertain", "date": "DD/MM/YYYY or null", "date_reason": "short explanation",
-  "supplier_status": "confirmed|corrected|uncertain", "supplier": "supplier name or null", "supplier_reason": "short explanation",
-  "amount_status": "confirmed|corrected|uncertain", "amount": "numeric string with 2 decimals or null", "amount_reason": "short explanation",
-  "currency_status": "confirmed|corrected|uncertain", "currency": "3-letter code or null", "currency_reason": "short explanation"
-}
-"""
+For each field return confirmed, corrected, or uncertain. Only correct a value when clearly readable. Do not guess.
+Return ONLY JSON with date_status/date/date_reason, supplier_status/supplier/supplier_reason, amount_status/amount/amount_reason, and currency_status/currency/currency_reason."""
 
 
 def _parse_verification(text: str) -> dict:
@@ -49,7 +36,6 @@ def _verification_should_run(result: InvoiceExtraction) -> bool:
 
 
 def verify_extraction(image_path: str, result: InvoiceExtraction, api_key: str, model: str) -> InvoiceExtraction:
-    """Verify and, when clearly supported, correct a first-pass extraction."""
     if not _verification_should_run(result):
         return result
 
@@ -57,10 +43,7 @@ def verify_extraction(image_path: str, result: InvoiceExtraction, api_key: str, 
 
     try:
         image_data, media_type = _load_and_encode_image(image_path)
-        first_pass = {
-            "date": result.date.value, "supplier": result.supplier.value,
-            "amount": result.amount.value, "currency": result.currency,
-        }
+        first_pass = {"date": result.date.value, "supplier": result.supplier.value, "amount": result.amount.value, "currency": result.currency}
         response = litellm.completion(
             model=model, api_key=api_key, max_tokens=768,
             messages=[
@@ -82,7 +65,6 @@ def verify_extraction(image_path: str, result: InvoiceExtraction, api_key: str, 
         verified_value = data.get(field_name)
         reason = data.get(f"{field_name}_reason")
         field = getattr(result, field_name)
-
         if status == "corrected" and verified_value not in (None, ""):
             old_value = field.value
             field.value = str(verified_value)
@@ -99,14 +81,12 @@ def verify_extraction(image_path: str, result: InvoiceExtraction, api_key: str, 
             field.validation_confidence = min(field.effective_confidence, 69)
             field.validation_issues.append("Second-pass verifier could not confirm this field.")
 
-    verified_currency = data.get("currency")
-    if data.get("currency_status") == "corrected" and verified_currency:
-        result.currency = str(verified_currency).upper()
+    if data.get("currency_status") == "corrected" and data.get("currency"):
+        result.currency = str(data["currency"]).upper()
         corrections.append(f"currency corrected to {result.currency}")
 
     if corrections:
         result.warnings.append("Second-pass verification made corrections: " + "; ".join(corrections))
     elif any(data.get(f"{name}_status") == "uncertain" for name in ("date", "supplier", "amount", "currency")):
         result.warnings.append("Second-pass verification could not confirm every field.")
-
     return result
