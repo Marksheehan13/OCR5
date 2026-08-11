@@ -1,20 +1,19 @@
 """OCR5 standalone web API.
 
-This module is a thin HTTP adapter around the existing OCR5 business logic.
-It intentionally does not reimplement extraction, validation, duplicate detection,
-or persistence. The existing modules remain the source of truth.
+Thin HTTP adapter around the existing OCR5 business logic. Extraction,
+validation, duplicate detection and persistence remain in src/.
 """
-
 from __future__ import annotations
 
 import os
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -26,15 +25,12 @@ from src.models import FieldResult, InvoiceExtraction, LineItem
 
 ROOT = Path(__file__).resolve().parent
 FRONTEND = ROOT / "frontend"
-
 app = FastAPI(title="OCR5 API", version="1.0.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
+
+# Temporary source files bridge the upload/review/save steps. They are deleted
+# after successful persistence or when the process restarts.
+_pending_sources: dict[str, tuple[Path, str]] = {}
 
 
 class FieldPayload(BaseModel):
@@ -57,6 +53,7 @@ class LineItemPayload(BaseModel):
 
 class InvoicePayload(BaseModel):
     source_file: str
+    source_token: str | None = None
     date: FieldPayload
     supplier: FieldPayload
     amount: FieldPayload
@@ -72,70 +69,30 @@ class InvoicePayload(BaseModel):
 
 
 def _field(payload: FieldPayload) -> FieldResult:
-    return FieldResult(
-        value=payload.value,
-        confidence=max(0, min(100, payload.confidence)),
-        reasons=payload.reasons,
-        validation_confidence=payload.validation_confidence,
-        validation_issues=payload.validation_issues,
-    )
+    return FieldResult(value=payload.value, confidence=max(0, min(100, payload.confidence)), reasons=payload.reasons, validation_confidence=payload.validation_confidence, validation_issues=payload.validation_issues)
 
 
 def _invoice(payload: InvoicePayload) -> InvoiceExtraction:
     return InvoiceExtraction(
         source_file=payload.source_file,
-        date=_field(payload.date),
-        supplier=_field(payload.supplier),
-        amount=_field(payload.amount),
-        currency=payload.currency or "EUR",
-        invoice_number=_field(payload.invoice_number),
-        subtotal=_field(payload.subtotal),
-        vat_amount=_field(payload.vat_amount),
-        vat_rate=_field(payload.vat_rate),
-        line_items=[LineItem(**item.model_dump()) for item in payload.line_items],
-        warnings=payload.warnings,
-        raw_text=payload.raw_text,
-        validation_warnings=payload.validation_warnings,
+        date=_field(payload.date), supplier=_field(payload.supplier), amount=_field(payload.amount), currency=payload.currency or "EUR",
+        invoice_number=_field(payload.invoice_number), subtotal=_field(payload.subtotal), vat_amount=_field(payload.vat_amount), vat_rate=_field(payload.vat_rate),
+        line_items=[LineItem(**item.model_dump()) for item in payload.line_items], warnings=payload.warnings, raw_text=payload.raw_text, validation_warnings=payload.validation_warnings,
     )
 
 
 def _field_json(field: FieldResult) -> dict[str, Any]:
-    return {
-        "value": field.value,
-        "confidence": field.effective_confidence,
-        "level": field.level,
-        "reasons": field.reasons,
-        "validation_issues": field.validation_issues,
-    }
+    return {"value": field.value, "confidence": field.effective_confidence, "level": field.level, "reasons": field.reasons, "validation_issues": field.validation_issues}
 
 
-def _invoice_json(invoice: InvoiceExtraction) -> dict[str, Any]:
+def _invoice_json(invoice: InvoiceExtraction, source_token: str | None = None) -> dict[str, Any]:
     return {
         "source_file": invoice.source_file,
-        "date": _field_json(invoice.date),
-        "supplier": _field_json(invoice.supplier),
-        "amount": _field_json(invoice.amount),
-        "currency": invoice.currency,
-        "invoice_number": _field_json(invoice.invoice_number),
-        "subtotal": _field_json(invoice.subtotal),
-        "vat_amount": _field_json(invoice.vat_amount),
-        "vat_rate": _field_json(invoice.vat_rate),
-        "line_items": [
-            {
-                "description": item.description,
-                "quantity": item.quantity,
-                "unit_price": item.unit_price,
-                "vat_rate": item.vat_rate,
-                "line_total": item.line_total,
-                "confidence": item.confidence,
-                "warnings": item.warnings,
-            }
-            for item in invoice.line_items
-        ],
-        "warnings": invoice.warnings,
-        "validation_warnings": invoice.validation_warnings,
-        "needs_review": invoice.needs_review,
-        "overall_confidence": invoice.overall_confidence,
+        "source_token": source_token,
+        "date": _field_json(invoice.date), "supplier": _field_json(invoice.supplier), "amount": _field_json(invoice.amount), "currency": invoice.currency,
+        "invoice_number": _field_json(invoice.invoice_number), "subtotal": _field_json(invoice.subtotal), "vat_amount": _field_json(invoice.vat_amount), "vat_rate": _field_json(invoice.vat_rate),
+        "line_items": [{"description": x.description, "quantity": x.quantity, "unit_price": x.unit_price, "vat_rate": x.vat_rate, "line_total": x.line_total, "confidence": x.confidence, "warnings": x.warnings} for x in invoice.line_items],
+        "warnings": invoice.warnings, "validation_warnings": invoice.validation_warnings, "needs_review": invoice.needs_review, "overall_confidence": invoice.overall_confidence,
     }
 
 
@@ -146,50 +103,50 @@ def health() -> dict[str, str]:
 
 @app.get("/api/providers")
 def providers() -> dict[str, Any]:
-    return {
-        "default": DEFAULT_PROVIDER,
-        "providers": [
-            {"name": name, "model": config["model"]}
-            for name, config in PROVIDERS.items()
-        ],
-    }
+    return {"default": DEFAULT_PROVIDER, "providers": [{"name": name, "model": config["model"]} for name, config in PROVIDERS.items()]}
 
 
 @app.post("/api/extract")
-async def extract(
-    file: UploadFile = File(...),
-    x_ocr5_api_key: str | None = Header(default=None),
-    x_ocr5_provider: str = Header(default=DEFAULT_PROVIDER),
-) -> dict[str, Any]:
+async def extract(file: UploadFile = File(...), x_ocr5_api_key: str | None = Header(default=None), x_ocr5_provider: str = Header(default=DEFAULT_PROVIDER)) -> dict[str, Any]:
     if x_ocr5_provider not in PROVIDERS:
-        raise HTTPException(status_code=400, detail=f"Unknown provider '{x_ocr5_provider}'.")
+        raise HTTPException(400, f"Unknown provider '{x_ocr5_provider}'.")
     api_key = x_ocr5_api_key or os.environ.get(PROVIDERS[x_ocr5_provider]["env_var"])
     if not api_key:
-        raise HTTPException(status_code=400, detail="No AI API key supplied.")
-
-    suffix = Path(file.filename or "invoice.jpg").suffix or ".jpg"
+        raise HTTPException(400, "No AI API key supplied.")
     content = await file.read()
     if not content:
-        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
-
-    tmp_path = None
+        raise HTTPException(400, "The uploaded file is empty.")
+    suffix = Path(file.filename or "invoice.jpg").suffix or ".jpg"
+    tmp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             tmp.write(content)
-            tmp_path = tmp.name
-        result = extract_invoice(tmp_path, api_key=api_key, provider=x_ocr5_provider)
+            tmp_path = Path(tmp.name)
+        result = extract_invoice(str(tmp_path), api_key=api_key, provider=x_ocr5_provider)
         result.source_file = file.filename or "invoice"
-        return {"invoice": _invoice_json(result)}
+        token = uuid.uuid4().hex
+        _pending_sources[token] = (tmp_path, file.content_type or "application/octet-stream")
+        tmp_path = None
+        return {"invoice": _invoice_json(result, token)}
     except ExtractionError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(422, str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"OCR5 extraction failed: {exc}") from exc
+        raise HTTPException(500, f"OCR5 extraction failed: {exc}") from exc
     finally:
         if tmp_path:
-            try:
-                Path(tmp_path).unlink(missing_ok=True)
-            except OSError:
-                pass
+            tmp_path.unlink(missing_ok=True)
+
+
+@app.get("/api/source/{token}")
+def source_preview(token: str) -> Response:
+    item = _pending_sources.get(token)
+    if not item:
+        raise HTTPException(404, "Source document is no longer available.")
+    path, mime = item
+    if not path.exists():
+        _pending_sources.pop(token, None)
+        raise HTTPException(404, "Source document is no longer available.")
+    return Response(path.read_bytes(), media_type=mime)
 
 
 @app.post("/api/invoices/check-duplicates")
@@ -197,36 +154,27 @@ def check_duplicates(payload: InvoicePayload) -> dict[str, Any]:
     try:
         history = get_all_invoices()
     except DatabaseError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(503, str(exc)) from exc
     invoice = _invoice(payload)
-    matches = find_duplicate_matches(
-        invoice.supplier.value,
-        invoice.date.value,
-        invoice.amount.value,
-        invoice.currency,
-        history,
-    )
-    return {
-        "matches": [
-            {
-                "invoice_id": match.invoice_id,
-                "supplier": match.supplier,
-                "invoice_date": match.invoice_date,
-                "amount": match.amount,
-                "currency": match.currency,
-                "score": getattr(match, "score", None),
-            }
-            for match in matches
-        ]
-    }
+    matches = find_duplicate_matches(invoice.supplier.value, invoice.date.value, invoice.amount.value, invoice.currency, history)
+    return {"matches": [{"invoice_id": m.invoice_id, "supplier": m.supplier, "invoice_date": m.invoice_date, "amount": m.amount, "currency": m.currency, "score": getattr(m, "score", None)} for m in matches]}
 
 
 @app.post("/api/invoices/save")
 def save_invoice(payload: InvoicePayload) -> dict[str, Any]:
     try:
-        return store_invoice_result(_invoice(payload))
+        invoice = _invoice(payload)
+        source = _pending_sources.get(payload.source_token or "")
+        image_bytes = source[0].read_bytes() if source and source[0].exists() else None
+        mime_type = source[1] if source else "application/octet-stream"
+        result = store_invoice_result(invoice, image_bytes=image_bytes, mime_type=mime_type)
+        if payload.source_token:
+            pending = _pending_sources.pop(payload.source_token, None)
+            if pending:
+                pending[0].unlink(missing_ok=True)
+        return result
     except DatabaseError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(503, str(exc)) from exc
 
 
 @app.get("/api/invoices")
@@ -234,26 +182,8 @@ def invoices() -> dict[str, Any]:
     try:
         rows = get_all_invoices()
     except DatabaseError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {
-        "invoices": [
-            {
-                "id": row[0],
-                "supplier": row[1],
-                "date": row[2],
-                "amount": row[3],
-                "currency": row[4],
-                "confidence": row[5],
-                "image_path": row[6],
-                "created_at": row[7],
-                "invoice_number": row[8],
-                "subtotal": row[9],
-                "vat_amount": row[10],
-                "vat_rate": row[11],
-            }
-            for row in rows
-        ]
-    }
+        raise HTTPException(503, str(exc)) from exc
+    return {"invoices": [{"id": r[0], "supplier": r[1], "date": r[2], "amount": r[3], "currency": r[4], "confidence": r[5], "image_path": r[6], "created_at": r[7], "invoice_number": r[8], "subtotal": r[9], "vat_amount": r[10], "vat_rate": r[11]} for r in rows]}
 
 
 @app.get("/api/analytics")
@@ -261,7 +191,7 @@ def analytics() -> dict[str, Any]:
     try:
         return get_invoice_analytics()
     except DatabaseError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(503, str(exc)) from exc
 
 
 if FRONTEND.exists():
