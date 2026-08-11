@@ -65,21 +65,14 @@ def _parse_verification(text: str) -> dict:
 
 
 def _verification_should_run(result: InvoiceExtraction) -> bool:
-    """Only spend a second model call when the first pass warrants scrutiny."""
     return result.needs_review or result.overall_confidence < VERIFICATION_THRESHOLD
 
 
-def verify_extraction(
-    image_path: str,
-    result: InvoiceExtraction,
-    api_key: str,
-    model: str,
-) -> InvoiceExtraction:
+def verify_extraction(image_path: str, result: InvoiceExtraction, api_key: str, model: str) -> InvoiceExtraction:
     """Verify and, when clearly supported, correct a first-pass extraction."""
     if not _verification_should_run(result):
         return result
 
-    # Local import avoids a module-level cycle: verifier reuses the extractor's image helper.
     from .llm_extractor import _load_and_encode_image
 
     try:
@@ -102,23 +95,14 @@ def verify_extraction(
             max_tokens=768,
             messages=[
                 {"role": "system", "content": VERIFIER_PROMPT},
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:{media_type};base64,{image_data}"},
-                        },
-                        {
-                            "type": "text",
-                            "text": "First-pass extraction:\n" + json.dumps(first_pass),
-                        },
-                    ],
-                },
+                {"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{image_data}"}},
+                    {"type": "text", "text": "First-pass extraction:\n" + json.dumps(first_pass)},
+                ]},
             ],
         )
         data = _parse_verification(response.choices[0].message.content or "")
-    except Exception as exc:  # noqa: BLE001 - verifier failure must not destroy extraction
+    except Exception as exc:
         result.warnings.append(f"Verification could not be completed: {exc}")
         return result
 
@@ -135,15 +119,11 @@ def verify_extraction(
             field.confidence = 90
             field.validation_confidence = None
             field.validation_issues = []
-            field.reasons.append(
-                f"Second-pass verifier corrected the value: {reason or 'image evidence'}"
-            )
+            field.reasons.append(f"Second-pass verifier corrected the value: {reason or 'image evidence'}")
             corrections.append(f"{field_name}: {old_value!r} → {verified_value!r}")
         elif status == "confirmed":
             field.confidence = max(field.effective_confidence, VERIFICATION_THRESHOLD)
-            field.reasons.append(
-                f"Second-pass verifier confirmed the value: {reason or 'image evidence'}"
-            )
+            field.reasons.append(f"Second-pass verifier confirmed the value: {reason or 'image evidence'}")
         elif status == "uncertain":
             field.confidence = min(field.effective_confidence, 69)
             field.validation_confidence = min(field.effective_confidence, 69)
@@ -156,10 +136,7 @@ def verify_extraction(
 
     if corrections:
         result.warnings.append("Second-pass verification made corrections: " + "; ".join(corrections))
-    elif any(
-        data.get(f"{name}_status") == "uncertain"
-        for name in ("date", "supplier", "amount", "currency")
-    ):
+    elif any(data.get(f"{name}_status") == "uncertain" for name in ("date", "supplier", "amount", "currency")):
         result.warnings.append("Second-pass verification could not confirm every field.")
 
     return result
