@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .database import DatabaseError, save_invoice
+from .database import DatabaseError, save_invoice, save_invoice_line_items
 from .models import InvoiceExtraction
 from .storage import StorageError, upload_invoice_image
 
@@ -21,14 +21,7 @@ def store_invoice_result(
     image_bytes: bytes | None = None,
     mime_type: str = "application/octet-stream",
 ):
-    """Store an approved invoice and, when supplied, its actual source image."""
-    amount = None
-    if invoice.amount.value:
-        try:
-            amount = float(invoice.amount.value)
-        except ValueError:
-            amount = None
-
+    """Store an approved invoice and its reviewed line items."""
     image_path = invoice.source_file
     if image_bytes is not None:
         try:
@@ -37,19 +30,35 @@ def store_invoice_result(
             raise DatabaseError(f"Invoice image could not be stored: {exc}") from exc
 
     confidence = calculate_overall_confidence(invoice)
-    save_invoice(
+    invoice_id = save_invoice(
         supplier=invoice.supplier.value,
         invoice_date=invoice.date.value,
-        amount=amount,
+        amount=_number(invoice.amount.value),
         currency=invoice.currency,
         confidence=confidence,
         image_path=image_path,
+        invoice_number=invoice.invoice_number.value,
+        subtotal=_number(invoice.subtotal.value),
+        vat_amount=_number(invoice.vat_amount.value),
+        vat_rate=_number(invoice.vat_rate.value),
     )
+    line_items_saved = save_invoice_line_items(invoice_id, invoice.line_items)
 
     return {
         "status": "saved",
+        "invoice_id": invoice_id,
         "supplier": invoice.supplier.value,
-        "amount": amount,
+        "amount": _number(invoice.amount.value),
         "confidence": confidence,
         "image_path": image_path,
+        "line_items_saved": line_items_saved,
     }
+
+
+def _number(value):
+    if value in (None, "", "null"):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
