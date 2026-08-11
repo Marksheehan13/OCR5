@@ -16,8 +16,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pandas as pd
 import streamlit as st
 
-from src.database import DatabaseError, initialise_database
+from src.database import DatabaseError, get_all_invoices, initialise_database
 from src.database_integration import store_invoice_result
+from src.duplicate_detector import DuplicateMatch, find_duplicate_matches
 from src.excel_writer import write_invoices_to_excel
 from src.llm_extractor import DEFAULT_PROVIDER, PROVIDERS, ExtractionError, extract_invoice
 from src.models import InvoiceExtraction
@@ -27,7 +28,7 @@ initialise_database()
 
 st.set_page_config(page_title="OCR5 - LLM Invoice Extractor", page_icon="🧠", layout="wide")
 st.title("🧠 OCR5: LLM-Based Invoice Extraction")
-st.caption("Upload invoice photos or receipts. OCR5 extracts the date, supplier and total amount, lets you review the result, and exports approved invoices to Excel.")
+st.caption("Upload invoice photos or receipts. OCR5 extracts the date, supplier and total amount, verifies the result, checks for duplicates, lets you review it, and exports approved invoices to Excel.")
 
 
 def _secret(name: str) -> str:
@@ -101,6 +102,10 @@ if "saved_indexes" not in st.session_state:
     st.session_state.saved_indexes = set()
 if "source_images" not in st.session_state:
     st.session_state.source_images = {}
+if "duplicate_confirmations" not in st.session_state:
+    st.session_state.duplicate_confirmations = set()
+if "invoice_history_snapshot" not in st.session_state:
+    st.session_state.invoice_history_snapshot = []
 
 uploaded_files = st.file_uploader(
     "Upload invoice photos",
@@ -115,6 +120,16 @@ if process_clicked and uploaded_files:
     st.session_state.overrides = {}
     st.session_state.saved_indexes = set()
     st.session_state.source_images = {}
+    st.session_state.duplicate_confirmations = set()
+
+    if database_configured:
+        try:
+            st.session_state.invoice_history_snapshot = get_all_invoices()
+        except DatabaseError:
+            st.session_state.invoice_history_snapshot = []
+    else:
+        st.session_state.invoice_history_snapshot = []
+
     results: list[InvoiceExtraction] = []
     progress_area = st.container()
 
@@ -131,7 +146,7 @@ if process_clicked and uploaded_files:
             try:
                 result = extract_invoice(tmp_path, api_key=active_key, provider=provider)
                 result.source_file = uploaded_file.name
-                status.write("Extraction complete. Review the result before saving.")
+                status.write("Extraction and verification complete. Review the result before saving.")
             except ExtractionError as exc:
                 status.update(label=f"Failed: {uploaded_file.name}", state="error")
                 status.write(f"Error: {exc}")
@@ -167,6 +182,18 @@ def _build_edited_invoice(idx: int, result: InvoiceExtraction) -> InvoiceExtract
     )
 
 
+def _get_duplicate_matches(idx: int, invoice: InvoiceExtraction) -> list[DuplicateMatch]:
+    if not database_configured:
+        return []
+    return find_duplicate_matches(
+        invoice.supplier.value,
+        invoice.date.value,
+        invoice.amount.value,
+        invoice.currency,
+        st.session_state.invoice_history_snapshot,
+    )
+
+
 if st.session_state.results:
     st.divider()
     st.subheader("Results")
@@ -193,6 +220,26 @@ if st.session_state.results:
                     overrides[key] = new_value
                     st.write(f"Confidence: {field_result.effective_confidence}%")
 
+            edited_for_duplicate_check = _build_edited_invoice(idx, result)
+            duplicate_matches = _get_duplicate_matches(idx, edited_for_duplicate_check)
+            if duplicate_matches:
+                best = duplicate_matches[0]
+                st.warning(
+                    f"⚠️ Possible duplicate: invoice #{best.invoice_id} already stored with "
+                    f"{best.supplier} · {best.invoice_date} · {best.currency} {best.amount:.2f}."
+                )
+                st.caption("Matched on supplier, date, amount and currency. OCR5 will not reject it automatically.")
+                confirmed = st.checkbox(
+                    "I confirm this is not a duplicate and want to approve it",
+                    value=idx in st.session_state.duplicate_confirmations,
+                    key=f"duplicate_confirm_{idx}",
+                    disabled=idx in st.session_state.saved_indexes,
+                )
+                if confirmed:
+                    st.session_state.duplicate_confirmations.add(idx)
+                else:
+                    st.session_state.duplicate_confirmations.discard(idx)
+
             overrides["approved"] = st.checkbox(
                 "Approved for export", value=not result.needs_review,
                 key=f"approve_{idx}", disabled=idx in st.session_state.saved_indexes,
@@ -201,11 +248,23 @@ if st.session_state.results:
     if database_configured:
         st.subheader("Save approved invoices")
         st.caption("Invoices are not written to Supabase until you explicitly approve and save them.")
-        unsaved_approved = [
-            idx for idx, result in enumerate(st.session_state.results)
-            if idx not in st.session_state.saved_indexes
-            and st.session_state.overrides.get(f"override_{idx}", {}).get("approved", not result.needs_review)
-        ]
+        unsaved_approved = []
+        blocked_duplicates = []
+        for idx, result in enumerate(st.session_state.results):
+            if idx in st.session_state.saved_indexes:
+                continue
+            if not st.session_state.overrides.get(f"override_{idx}", {}).get("approved", not result.needs_review):
+                continue
+            edited = _build_edited_invoice(idx, result)
+            duplicate_matches = _get_duplicate_matches(idx, edited)
+            if duplicate_matches and idx not in st.session_state.duplicate_confirmations:
+                blocked_duplicates.append(idx)
+                continue
+            unsaved_approved.append(idx)
+
+        if blocked_duplicates:
+            names = ", ".join(st.session_state.results[idx].source_file for idx in blocked_duplicates)
+            st.info(f"Possible duplicates require confirmation before saving: {names}")
 
         if st.button(f"💾 Save {len(unsaved_approved)} approved invoice(s) to history", type="primary", disabled=not unsaved_approved):
             save_errors = []
