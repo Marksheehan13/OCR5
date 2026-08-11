@@ -8,43 +8,23 @@ import litellm
 
 from .models import InvoiceExtraction
 
-# Clean results at or above this threshold avoid a second API call.
 VERIFICATION_THRESHOLD = 90
 
 VERIFIER_PROMPT = """You are an independent invoice verification system.
 
 You will receive an invoice/receipt image and the first-pass extraction below.
-Do NOT assume the first-pass values are correct. Inspect the original image and
-independently verify each field.
+Do NOT assume the first-pass values are correct. Inspect the original image and independently verify each field.
 
-Fields to verify:
-- date: invoice/transaction issue date, not due date or expiry date
-- supplier: business that issued the invoice/receipt
-- amount: final total paid or owed, not subtotal, VAT, discount, or line item
-- currency: three-letter currency code
+Verify date (issue/transaction date), supplier (issuing business), amount (final total), and currency.
 
-For every field, return one of:
-- confirmed: the first-pass value is clearly supported by the image
-- corrected: the image clearly shows a different value
-- uncertain: the image is too unclear to decide
+For every field return: confirmed, corrected, or uncertain. Only provide a corrected value when clearly readable. Do not guess.
 
-Only provide a corrected value when it is clearly readable in the image.
-Do not guess.
-
-Return ONLY this JSON shape:
+Return ONLY JSON:
 {
-  "date_status": "confirmed|corrected|uncertain",
-  "date": "DD/MM/YYYY or null",
-  "date_reason": "short explanation",
-  "supplier_status": "confirmed|corrected|uncertain",
-  "supplier": "supplier name or null",
-  "supplier_reason": "short explanation",
-  "amount_status": "confirmed|corrected|uncertain",
-  "amount": "numeric string with 2 decimals or null",
-  "amount_reason": "short explanation",
-  "currency_status": "confirmed|corrected|uncertain",
-  "currency": "3-letter code or null",
-  "currency_reason": "short explanation"
+  "date_status": "confirmed|corrected|uncertain", "date": "DD/MM/YYYY or null", "date_reason": "short explanation",
+  "supplier_status": "confirmed|corrected|uncertain", "supplier": "supplier name or null", "supplier_reason": "short explanation",
+  "amount_status": "confirmed|corrected|uncertain", "amount": "numeric string with 2 decimals or null", "amount_reason": "short explanation",
+  "currency_status": "confirmed|corrected|uncertain", "currency": "3-letter code or null", "currency_reason": "short explanation"
 }
 """
 
@@ -77,22 +57,12 @@ def verify_extraction(image_path: str, result: InvoiceExtraction, api_key: str, 
 
     try:
         image_data, media_type = _load_and_encode_image(image_path)
-    except Exception as exc:
-        result.warnings.append(f"Verification could not read the invoice image: {exc}")
-        return result
-
-    first_pass = {
-        "date": result.date.value,
-        "supplier": result.supplier.value,
-        "amount": result.amount.value,
-        "currency": result.currency,
-    }
-
-    try:
+        first_pass = {
+            "date": result.date.value, "supplier": result.supplier.value,
+            "amount": result.amount.value, "currency": result.currency,
+        }
         response = litellm.completion(
-            model=model,
-            api_key=api_key,
-            max_tokens=768,
+            model=model, api_key=api_key, max_tokens=768,
             messages=[
                 {"role": "system", "content": VERIFIER_PROMPT},
                 {"role": "user", "content": [
