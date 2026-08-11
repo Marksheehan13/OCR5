@@ -32,6 +32,21 @@ class FieldResult:
 
 
 @dataclass
+class LineItem:
+    description: str
+    quantity: str | None = None
+    unit_price: str | None = None
+    vat_rate: str | None = None
+    line_total: str | None = None
+    confidence: int = 0
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def needs_review(self) -> bool:
+        return not self.description or self.confidence < 70 or bool(self.warnings)
+
+
+@dataclass
 class InvoiceExtraction:
     source_file: str
     date: FieldResult
@@ -42,6 +57,7 @@ class InvoiceExtraction:
     subtotal: FieldResult = field(default_factory=lambda: FieldResult(None, 0))
     vat_amount: FieldResult = field(default_factory=lambda: FieldResult(None, 0))
     vat_rate: FieldResult = field(default_factory=lambda: FieldResult(None, 0))
+    line_items: list[LineItem] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     raw_text: str = ""
     validation_warnings: list[str] = field(default_factory=list)
@@ -52,6 +68,7 @@ class InvoiceExtraction:
             self.date.level == "review"
             or self.supplier.level == "review"
             or self.amount.level == "review"
+            or any(item.needs_review for item in self.line_items)
             or bool(self.warnings)
         )
 
