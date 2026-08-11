@@ -45,20 +45,18 @@ def save_invoice(
 ) -> int:
     """Save an approved invoice and return its database id."""
     client = _get_client()
-    response = client.table("invoices").insert(
-        {
-            "supplier": supplier,
-            "invoice_date": invoice_date,
-            "amount": amount,
-            "currency": currency,
-            "confidence": confidence,
-            "image_path": image_path,
-            "invoice_number": invoice_number,
-            "subtotal": subtotal,
-            "vat_amount": vat_amount,
-            "vat_rate": vat_rate,
-        }
-    ).execute()
+    response = client.table("invoices").insert({
+        "supplier": supplier,
+        "invoice_date": invoice_date,
+        "amount": amount,
+        "currency": currency,
+        "confidence": confidence,
+        "image_path": image_path,
+        "invoice_number": invoice_number,
+        "subtotal": subtotal,
+        "vat_amount": vat_amount,
+        "vat_rate": vat_rate,
+    }).execute()
     if not response.data:
         raise DatabaseError("Invoice was not returned after saving.")
     return response.data[0]["id"]
@@ -91,6 +89,31 @@ def save_invoice_line_items(invoice_id: int, line_items) -> int:
     ]
     _get_client().table("invoice_line_items").insert(rows).execute()
     return len(rows)
+
+
+def get_invoice_line_items(invoice_id: int) -> list[dict]:
+    """Return line items for one invoice, preserving stored order."""
+    response = (
+        _get_client()
+        .table("invoice_line_items")
+        .select("id,description,quantity,unit_price,vat_rate,line_total,confidence,created_at")
+        .eq("invoice_id", invoice_id)
+        .order("id")
+        .execute()
+    )
+    return response.data or []
+
+
+def get_all_invoice_line_items() -> list[dict]:
+    """Return all stored line items for later reporting/analytics."""
+    response = (
+        _get_client()
+        .table("invoice_line_items")
+        .select("id,invoice_id,description,quantity,unit_price,vat_rate,line_total,confidence,created_at")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return response.data or []
 
 
 _COLUMNS = (
