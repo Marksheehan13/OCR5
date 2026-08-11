@@ -43,12 +43,15 @@ MAX_LONG_EDGE = 1568
 # tier (no credit card required) with native vision support -- see
 # docs/comparison.md and README.md for the cost tradeoffs of each option.
 #
-# Groq's vision-model lineup changes frequently (models get deprecated with
-# little notice) -- if the Groq option stops working, check
-# console.groq.com/docs/vision for the current vision-capable model name
-# and update PROVIDERS below.
+# Both Google and Groq deprecate/rename specific model versions frequently
+# (this file has already been updated once after gemini-2.5-flash and then
+# gemini-3-flash-preview were both retired within the same year). If either
+# option stops working with a "model not found" / 404-style error, check
+# the provider's current model list and update PROVIDERS below:
+#   Gemini: ai.google.dev/gemini-api/docs/models
+#   Groq:   console.groq.com/docs/vision
 PROVIDERS: dict[str, dict[str, str]] = {
-    "Google Gemini (free tier)": {"model": "gemini/gemini-2.5-flash", "env_var": "GEMINI_API_KEY"},
+    "Google Gemini (free tier)": {"model": "gemini/gemini-3.5-flash", "env_var": "GEMINI_API_KEY"},
     "Anthropic": {"model": "claude-sonnet-5", "env_var": "ANTHROPIC_API_KEY"},
     "OpenAI": {"model": "gpt-5-mini", "env_var": "OPENAI_API_KEY"},
     "Groq": {"model": "groq/meta-llama/llama-4-scout-17b-16e-instruct", "env_var": "GROQ_API_KEY"},
