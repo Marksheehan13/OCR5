@@ -42,10 +42,10 @@ def save_invoice(
     subtotal: float | None = None,
     vat_amount: float | None = None,
     vat_rate: float | None = None,
-) -> None:
-    """Save an approved invoice and its extracted financial metadata."""
+) -> int:
+    """Save an approved invoice and return its database id."""
     client = _get_client()
-    client.table("invoices").insert(
+    response = client.table("invoices").insert(
         {
             "supplier": supplier,
             "invoice_date": invoice_date,
@@ -59,6 +59,38 @@ def save_invoice(
             "vat_rate": vat_rate,
         }
     ).execute()
+    if not response.data:
+        raise DatabaseError("Invoice was not returned after saving.")
+    return response.data[0]["id"]
+
+
+def save_invoice_line_items(invoice_id: int, line_items) -> int:
+    """Save the reviewed line items belonging to an invoice."""
+    if not line_items:
+        return 0
+
+    def number(value):
+        if value in (None, "", "null"):
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    rows = [
+        {
+            "invoice_id": invoice_id,
+            "description": item.description,
+            "quantity": number(item.quantity),
+            "unit_price": number(item.unit_price),
+            "vat_rate": number(item.vat_rate),
+            "line_total": number(item.line_total),
+            "confidence": max(0, min(100, int(item.confidence or 0))),
+        }
+        for item in line_items
+    ]
+    _get_client().table("invoice_line_items").insert(rows).execute()
+    return len(rows)
 
 
 _COLUMNS = (
