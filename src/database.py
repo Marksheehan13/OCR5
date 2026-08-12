@@ -2,6 +2,7 @@
 database.py
 
 Persistent storage layer for OCR5, backed by Supabase (Postgres).
+Client-aware invoice history is supported via the optional client_id parameter.
 """
 
 from __future__ import annotations
@@ -76,7 +77,7 @@ def get_all_invoice_line_items() -> list[dict]:
 
 
 def get_client_invoice_line_items(client_id: int) -> list[dict]:
-    invoice_ids = [row[0] for row in get_all_invoices(client_id) if row[0] is not None]
+    invoice_ids = [row[0] for row in get_all_invoices(client_id=client_id) if row[0] is not None]
     if not invoice_ids:
         return []
     response = _get_client().table("invoice_line_items").select("id,invoice_id,description,quantity,unit_price,vat_rate,line_total,confidence,created_at").in_("invoice_id", invoice_ids).order("created_at", desc=True).execute()
@@ -85,7 +86,7 @@ def get_client_invoice_line_items(client_id: int) -> list[dict]:
 
 def get_invoice_analytics(client_id: int | None = None) -> dict:
     """Return database-backed invoice and line-item aggregates for one client."""
-    invoices = get_all_invoices(client_id)
+    invoices = get_all_invoices(client_id=client_id)
     items = get_client_invoice_line_items(client_id) if client_id is not None else get_all_invoice_line_items()
     valid_amounts = [float(row[3]) for row in invoices if row[3] is not None]
     valid_vat = [float(row[10]) for row in invoices if row[10] is not None]
@@ -109,7 +110,7 @@ def get_invoice_analytics(client_id: int | None = None) -> dict:
 
 def get_supplier_item_analysis(client_id: int | None = None) -> list[dict]:
     """Aggregate purchased items by normalized description and supplier."""
-    invoices = {row[0]: (row[1] or "Unknown supplier") for row in get_all_invoices(client_id)}
+    invoices = {row[0]: (row[1] or "Unknown supplier") for row in get_all_invoices(client_id=client_id)}
     groups = {}
     items = get_client_invoice_line_items(client_id) if client_id is not None else get_all_invoice_line_items()
     for item in items:
@@ -161,6 +162,7 @@ def _rows(response) -> list[tuple]:
 
 
 def get_all_invoices(client_id: int | None = None) -> list[tuple]:
+    """Return invoices, optionally restricted to one client."""
     query = _get_client().table("invoices").select(_COLUMNS)
     if client_id is not None:
         query = query.eq("client_id", client_id)
