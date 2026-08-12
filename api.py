@@ -13,19 +13,11 @@ from typing import Any
 
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from src.client_database import (
-    archive_client,
-    create_client,
-    get_client,
-    get_client_analytics,
-    list_clients,
-    restore_client,
-    update_client,
-)
+from src.client_database import archive_client, create_client, get_client, get_client_analytics, list_clients, restore_client, update_client
 from src.database import DatabaseError, get_all_invoices, get_invoice_analytics
 from src.database_integration import store_invoice_result
 from src.duplicate_detector import find_duplicate_matches
@@ -36,8 +28,6 @@ ROOT = Path(__file__).resolve().parent
 FRONTEND = ROOT / "frontend"
 app = FastAPI(title="OCR5 API", version="1.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
-
-# token -> (temporary source path, mime type, client id)
 _pending_sources: dict[str, tuple[Path, str, int]] = {}
 
 
@@ -122,8 +112,7 @@ def _field_json(field: FieldResult) -> dict[str, Any]:
 
 def _invoice_json(invoice: InvoiceExtraction, source_token: str | None = None) -> dict[str, Any]:
     return {
-        "source_file": invoice.source_file,
-        "source_token": source_token,
+        "source_file": invoice.source_file, "source_token": source_token,
         "date": _field_json(invoice.date), "supplier": _field_json(invoice.supplier), "amount": _field_json(invoice.amount), "currency": invoice.currency,
         "invoice_number": _field_json(invoice.invoice_number), "subtotal": _field_json(invoice.subtotal), "vat_amount": _field_json(invoice.vat_amount), "vat_rate": _field_json(invoice.vat_rate),
         "line_items": [{"description": x.description, "quantity": x.quantity, "unit_price": x.unit_price, "vat_rate": x.vat_rate, "line_total": x.line_total, "confidence": x.confidence, "warnings": x.warnings} for x in invoice.line_items],
@@ -179,7 +168,6 @@ def edit_client(client_id: int, payload: ClientUpdatePayload) -> dict[str, Any]:
 
 @app.delete("/api/clients/{client_id}")
 def delete_client(client_id: int) -> dict[str, Any]:
-    """Archive rather than hard-delete so existing financial records remain intact."""
     try:
         return {"client": archive_client(client_id), "status": "archived"}
     except DatabaseError as exc:
@@ -216,37 +204,31 @@ async def extract(file: UploadFile = File(...), x_ocr5_api_key: str | None = Hea
         token = uuid.uuid4().hex
         _pending_sources[token] = (tmp_path, file.content_type or "application/octet-stream", client_id)
         tmp_path = None
-        payload = _invoice_json(result, token)
-        payload["client_id"] = client_id
+        payload = _invoice_json(result, token); payload["client_id"] = client_id
         return {"invoice": payload}
     except ExtractionError as exc:
         raise HTTPException(422, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(500, f"OCR5 extraction failed: {exc}") from exc
     finally:
-        if tmp_path:
-            tmp_path.unlink(missing_ok=True)
+        if tmp_path: tmp_path.unlink(missing_ok=True)
 
 
 @app.get("/api/source/{token}")
 def source_preview(token: str) -> Response:
     item = _pending_sources.get(token)
-    if not item:
-        raise HTTPException(404, "Source document is no longer available.")
+    if not item: raise HTTPException(404, "Source document is no longer available.")
     path, mime, _ = item
     if not path.exists():
-        _pending_sources.pop(token, None)
-        raise HTTPException(404, "Source document is no longer available.")
+        _pending_sources.pop(token, None); raise HTTPException(404, "Source document is no longer available.")
     return Response(path.read_bytes(), media_type=mime)
 
 
 @app.post("/api/invoices/check-duplicates")
 def check_duplicates(payload: InvoicePayload, x_ocr5_client_id: str | None = Header(default=None)) -> dict[str, Any]:
     client_id = _client_id(x_ocr5_client_id)
-    try:
-        history = get_all_invoices(client_id)
-    except DatabaseError as exc:
-        raise HTTPException(503, str(exc)) from exc
+    try: history = get_all_invoices(client_id)
+    except DatabaseError as exc: raise HTTPException(503, str(exc)) from exc
     invoice = _invoice(payload)
     matches = find_duplicate_matches(invoice.supplier.value, invoice.date.value, invoice.amount.value, invoice.currency, history)
     return {"client_id": client_id, "matches": [{"invoice_id": m.invoice_id, "supplier": m.supplier, "invoice_date": m.invoice_date, "amount": m.amount, "currency": m.currency, "score": getattr(m, "score", None)} for m in matches]}
@@ -265,37 +247,37 @@ def save_invoice(payload: InvoicePayload, x_ocr5_client_id: str | None = Header(
         result = store_invoice_result(invoice, image_bytes=image_bytes, mime_type=mime_type, client_id=client_id)
         if payload.source_token:
             pending = _pending_sources.pop(payload.source_token, None)
-            if pending:
-                pending[0].unlink(missing_ok=True)
+            if pending: pending[0].unlink(missing_ok=True)
         return result
-    except HTTPException:
-        raise
-    except DatabaseError as exc:
-        raise HTTPException(503, str(exc)) from exc
+    except HTTPException: raise
+    except DatabaseError as exc: raise HTTPException(503, str(exc)) from exc
 
 
 @app.get("/api/invoices")
 def invoices(x_ocr5_client_id: str | None = Header(default=None)) -> dict[str, Any]:
     client_id = _client_id(x_ocr5_client_id)
-    try:
-        rows = get_all_invoices(client_id)
-    except DatabaseError as exc:
-        raise HTTPException(503, str(exc)) from exc
+    try: rows = get_all_invoices(client_id)
+    except DatabaseError as exc: raise HTTPException(503, str(exc)) from exc
     return {"client_id": client_id, "invoices": [{"id": r[0], "supplier": r[1], "date": r[2], "amount": r[3], "currency": r[4], "confidence": r[5], "image_path": r[6], "created_at": r[7], "invoice_number": r[8], "subtotal": r[9], "vat_amount": r[10], "vat_rate": r[11], "client_id": r[12]} for r in rows]}
 
 
 @app.get("/api/analytics")
 def analytics(x_ocr5_client_id: str | None = Header(default=None)) -> dict[str, Any]:
     client_id = _client_id(x_ocr5_client_id)
-    try:
-        return get_invoice_analytics(client_id)
-    except DatabaseError as exc:
-        raise HTTPException(503, str(exc)) from exc
+    try: return get_invoice_analytics(client_id)
+    except DatabaseError as exc: raise HTTPException(503, str(exc)) from exc
 
 
 if FRONTEND.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND), name="assets")
 
-    @app.get("/")
-    def frontend() -> FileResponse:
-        return FileResponse(FRONTEND / "index.html")
+    @app.get("/", response_class=HTMLResponse)
+    def frontend() -> HTMLResponse:
+        # Keep the existing frontend intact while injecting the client-management
+        # module at runtime. This lets us add the feature without duplicating or
+        # rewriting the large existing HTML document.
+        html = (FRONTEND / "index.html").read_text(encoding="utf-8")
+        injection = '<script src="/assets/clients.js"></script>'
+        if injection not in html:
+            html = html.replace("</body>", injection + "</body>")
+        return HTMLResponse(content=html)
