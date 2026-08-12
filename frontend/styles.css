@@ -1,1 +1,47 @@
 @import url('./styles-v3.css');
+
+/* OCR5 UI polish layer — keep business logic untouched. */
+:root {
+  --ocr5-focus: 0 0 0 3px rgba(114,87,255,.16);
+}
+
+html { scroll-behavior: smooth; }
+body { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+button, input, select { transition: background .16s ease, border-color .16s ease, box-shadow .16s ease, transform .16s ease, color .16s ease; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: none; box-shadow: var(--ocr5-focus); }
+
+/* Make the application feel like a real bookkeeping workspace rather than a static mockup. */
+.topbar { box-shadow: 0 1px 0 rgba(23,21,29,.02); }
+.page { animation: ocr5-page-in .22s ease both; }
+.metric, .panel, .supplier-grid article { transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease; }
+.metric:hover, .supplier-grid article:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(30,20,40,.06); border-color: #ddd8e3; }
+.panel:hover { border-color: #e0dce5; }
+.clickable { cursor: pointer; }
+.clickable:focus-visible { outline: none; box-shadow: inset 0 0 0 2px #7257ff; }
+.primary:active { transform: translateY(0); }
+
+/* Stronger table hierarchy and usable hover/focus states. */
+.invoice-row { min-height: 56px; }
+.invoice-row.heading { min-height: 40px; background: #fcfbfd; }
+.invoice-row.clickable:hover { background: #f8f6fb; }
+.invoice-row b { font-variant-numeric: tabular-nums; }
+.confidence, .low { font-variant-numeric: tabular-nums; }
+.low { color: #bf7c2f; font-weight: 800; }
+
+/* Hide horizontal overflow instead of allowing wide finance tables to break the page. */
+.invoice-table { overflow-x: auto; }
+
+/* Better empty/mobile behaviour. */
+@media (max-width: 700px) {
+  .topbar { height: 58px; }
+  .top-actions .icon-btn:first-child { display: none; }
+  .hero h1 { font-size: 34px; }
+  .intelligence { border-radius: 16px; }
+  .metric { min-width: 0; }
+  .metric > strong { font-size: 24px; }
+}
+
+@keyframes ocr5-page-in { from { opacity: .92; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
