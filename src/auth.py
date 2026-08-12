@@ -20,20 +20,20 @@ def _anon_key() -> str:
 
 
 def create_auth_client() -> Client:
-    """Create a client intended for end-user authentication.
-
-    This deliberately uses the public/anon key. Service-role credentials must
-    never be shipped to the browser or used as an end-user credential.
-    """
+    """Create an end-user Supabase client using the public/anon key."""
     return create_client(_url(), _anon_key())
 
 
 def sign_up(email: str, password: str):
-    return create_auth_client().auth.sign_up({"email": email.strip(), "password": password})
+    client = create_auth_client()
+    response = client.auth.sign_up({"email": email.strip(), "password": password})
+    return client, response
 
 
 def sign_in(email: str, password: str):
-    return create_auth_client().auth.sign_in_with_password({"email": email.strip(), "password": password})
+    client = create_auth_client()
+    response = client.auth.sign_in_with_password({"email": email.strip(), "password": password})
+    return client, response
 
 
 def sign_out(client: Client) -> None:
