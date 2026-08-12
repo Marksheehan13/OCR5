@@ -1,9 +1,9 @@
-"""Authentication helpers for OCR5 multi-user SaaS mode."""
+"""Authentication and workspace helpers for OCR5."""
 from __future__ import annotations
 
 import os
 from supabase import Client, create_client
-from .db_context import bind_client, clear_client
+from .db_context import bind_client, clear_client, get_identity_email
 
 
 def _url() -> str:
@@ -47,12 +47,75 @@ def sign_out(client: Client) -> None:
 
 
 def current_session(client: Client):
-    """Return the current auth session, if one exists."""
     return client.auth.get_session()
 
 
+def ensure_workspace(email: str, display_name: str = "", company_name: str = "") -> dict:
+    """Create or return the workspace associated with a Streamlit OIDC identity.
+
+    This runs only on the trusted Streamlit server using SUPABASE_KEY. The key
+    must remain in Streamlit secrets; it is never sent to the browser.
+    """
+    email = (email or "").strip().lower()
+    display_name = (display_name or "").strip()
+    company_name = (company_name or "").strip()
+    if not email:
+        raise RuntimeError("Google did not provide an email address.")
+
+    admin = create_auth_client()
+    existing = (
+        admin.table("organization_identities")
+        .select("email,organization_id,display_name,company_name")
+        .eq("email", email)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if existing:
+        row = existing[0]
+        updates = {}
+        if display_name and not row.get("display_name"): updates["display_name"] = display_name
+        if company_name and not row.get("company_name"): updates["company_name"] = company_name
+        if updates:
+            admin.table("organization_identities").update(updates).eq("email", email).execute()
+            row.update(updates)
+        return row
+
+    org_name = company_name or (f"{display_name}'s workspace" if display_name else "OCR5 workspace")
+    org = admin.table("organizations").insert({"name": org_name}).execute()
+    if not org.data:
+        raise RuntimeError("OCR5 could not create your workspace.")
+    org_id = org.data[0]["id"]
+    row = {
+        "email": email,
+        "organization_id": org_id,
+        "display_name": display_name or None,
+        "company_name": company_name or None,
+    }
+    try:
+        result = admin.table("organization_identities").insert(row).execute()
+        if not result.data:
+            raise RuntimeError("OCR5 could not save your workspace.")
+        return result.data[0]
+    except Exception:
+        admin.table("organizations").delete().eq("id", org_id).execute()
+        raise
+
+
 def organisation_id(client: Client) -> str | None:
-    """Return the organisation belonging to the current authenticated user."""
+    """Return the organisation for either Supabase Auth or Streamlit OIDC."""
+    email = get_identity_email()
+    if email:
+        response = (
+            client.table("organization_identities")
+            .select("organization_id")
+            .eq("email", email)
+            .limit(1)
+            .execute()
+        )
+        if response.data:
+            return response.data[0]["organization_id"]
+
     user = getattr(client.auth.get_user(), "user", None)
     if not user:
         return None
