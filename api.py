@@ -132,73 +132,56 @@ def providers() -> dict[str, Any]:
 
 @app.get("/api/clients")
 def clients(include_inactive: bool = False) -> dict[str, Any]:
-    try:
-        return {"clients": list_clients(include_inactive=include_inactive)}
-    except DatabaseError as exc:
-        raise HTTPException(503, str(exc)) from exc
+    try: return {"clients": list_clients(include_inactive=include_inactive)}
+    except DatabaseError as exc: raise HTTPException(503, str(exc)) from exc
 
 
 @app.post("/api/clients")
 def add_client(payload: ClientPayload) -> dict[str, Any]:
-    try:
-        return {"client": create_client(payload.name, payload.company_name, payload.email, payload.phone, payload.address)}
-    except DatabaseError as exc:
-        raise HTTPException(400, str(exc)) from exc
+    try: return {"client": create_client(payload.name, payload.company_name, payload.email, payload.phone, payload.address)}
+    except DatabaseError as exc: raise HTTPException(400, str(exc)) from exc
 
 
 @app.get("/api/clients/{client_id}")
 def client_detail(client_id: int) -> dict[str, Any]:
     try:
         client = get_client(client_id)
-        if not client:
-            raise HTTPException(404, "Client not found.")
+        if not client: raise HTTPException(404, "Client not found.")
         return {"client": client, "analytics": get_client_analytics(client_id)}
-    except DatabaseError as exc:
-        raise HTTPException(503, str(exc)) from exc
+    except DatabaseError as exc: raise HTTPException(503, str(exc)) from exc
 
 
 @app.patch("/api/clients/{client_id}")
 def edit_client(client_id: int, payload: ClientUpdatePayload) -> dict[str, Any]:
-    try:
-        fields = payload.model_dump(exclude_none=True)
-        return {"client": update_client(client_id, **fields)}
-    except DatabaseError as exc:
-        raise HTTPException(400, str(exc)) from exc
+    try: return {"client": update_client(client_id, **payload.model_dump(exclude_none=True))}
+    except DatabaseError as exc: raise HTTPException(400, str(exc)) from exc
 
 
 @app.delete("/api/clients/{client_id}")
 def delete_client(client_id: int) -> dict[str, Any]:
-    try:
-        return {"client": archive_client(client_id), "status": "archived"}
-    except DatabaseError as exc:
-        raise HTTPException(400, str(exc)) from exc
+    try: return {"client": archive_client(client_id), "status": "archived"}
+    except DatabaseError as exc: raise HTTPException(400, str(exc)) from exc
 
 
 @app.post("/api/clients/{client_id}/restore")
 def unarchive_client(client_id: int) -> dict[str, Any]:
-    try:
-        return {"client": restore_client(client_id), "status": "active"}
-    except DatabaseError as exc:
-        raise HTTPException(400, str(exc)) from exc
+    try: return {"client": restore_client(client_id), "status": "active"}
+    except DatabaseError as exc: raise HTTPException(400, str(exc)) from exc
 
 
 @app.post("/api/extract")
 async def extract(file: UploadFile = File(...), x_ocr5_api_key: str | None = Header(default=None), x_ocr5_provider: str = Header(default=DEFAULT_PROVIDER), x_ocr5_client_id: str | None = Header(default=None)) -> dict[str, Any]:
     client_id = _client_id(x_ocr5_client_id)
-    if x_ocr5_provider not in PROVIDERS:
-        raise HTTPException(400, f"Unknown provider '{x_ocr5_provider}'.")
+    if x_ocr5_provider not in PROVIDERS: raise HTTPException(400, f"Unknown provider '{x_ocr5_provider}'.")
     api_key = x_ocr5_api_key or os.environ.get(PROVIDERS[x_ocr5_provider]["env_var"])
-    if not api_key:
-        raise HTTPException(400, "No AI API key supplied.")
+    if not api_key: raise HTTPException(400, "No AI API key supplied.")
     content = await file.read()
-    if not content:
-        raise HTTPException(400, "The uploaded file is empty.")
+    if not content: raise HTTPException(400, "The uploaded file is empty.")
     suffix = Path(file.filename or "invoice.jpg").suffix or ".jpg"
     tmp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(content)
-            tmp_path = Path(tmp.name)
+            tmp.write(content); tmp_path = Path(tmp.name)
         result = extract_invoice(str(tmp_path), api_key=api_key, provider=x_ocr5_provider)
         result.source_file = file.filename or "invoice"
         token = uuid.uuid4().hex
@@ -206,10 +189,8 @@ async def extract(file: UploadFile = File(...), x_ocr5_api_key: str | None = Hea
         tmp_path = None
         payload = _invoice_json(result, token); payload["client_id"] = client_id
         return {"invoice": payload}
-    except ExtractionError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(500, f"OCR5 extraction failed: {exc}") from exc
+    except ExtractionError as exc: raise HTTPException(422, str(exc)) from exc
+    except Exception as exc: raise HTTPException(500, f"OCR5 extraction failed: {exc}") from exc
     finally:
         if tmp_path: tmp_path.unlink(missing_ok=True)
 
@@ -238,10 +219,8 @@ def check_duplicates(payload: InvoicePayload, x_ocr5_client_id: str | None = Hea
 def save_invoice(payload: InvoicePayload, x_ocr5_client_id: str | None = Header(default=None)) -> dict[str, Any]:
     client_id = _client_id(x_ocr5_client_id)
     try:
-        invoice = _invoice(payload)
-        source = _pending_sources.get(payload.source_token or "")
-        if source and source[2] != client_id:
-            raise HTTPException(409, "The selected client changed while this invoice was being reviewed. Please re-upload it under the correct client.")
+        invoice = _invoice(payload); source = _pending_sources.get(payload.source_token or "")
+        if source and source[2] != client_id: raise HTTPException(409, "The selected client changed while this invoice was being reviewed. Please re-upload it under the correct client.")
         image_bytes = source[0].read_bytes() if source and source[0].exists() else None
         mime_type = source[1] if source else "application/octet-stream"
         result = store_invoice_result(invoice, image_bytes=image_bytes, mime_type=mime_type, client_id=client_id)
@@ -273,11 +252,7 @@ if FRONTEND.exists():
 
     @app.get("/", response_class=HTMLResponse)
     def frontend() -> HTMLResponse:
-        # Keep the existing frontend intact while injecting the client-management
-        # module at runtime. This lets us add the feature without duplicating or
-        # rewriting the large existing HTML document.
         html = (FRONTEND / "index.html").read_text(encoding="utf-8")
-        injection = '<script src="/assets/clients.js"></script>'
-        if injection not in html:
-            html = html.replace("</body>", injection + "</body>")
+        injection = '<script src="/assets/clients.js"></script><script src="/assets/client-actions.js"></script>'
+        if injection not in html: html = html.replace("</body>", injection + "</body>")
         return HTMLResponse(content=html)
