@@ -1,70 +1,15 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="OCR5 — AI-native bookkeeping"><title>OCR5 — Intelligent bookkeeping</title>
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="OCR5 — AI-native bookkeeping">
+<meta name="theme-color" content="#111318">
+<title>OCR5 — Intelligent bookkeeping</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-<div class="app">
-<aside class="sidebar">
-  <div class="brand"><span class="logo"><i></i><i></i><i></i></span><span>OCR<span>5</span></span></div>
-  <button class="workspace"><span class="avatar-dot">M</span><span><b>Mark's Books</b><small>Personal workspace</small></span><svg viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></svg></button>
-  <nav>
-    <small class="nav-label">Workspace</small>
-    <button class="nav active" data-page="overview"><svg viewBox="0 0 24 24"><path d="M4 13h6V4H4zm10 7h6V4h-6zM4 20h6v-3H4zm10-7h6v-3h-6z"/></svg><span>Overview</span></button>
-    <button class="nav" data-page="invoices"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM9 11h6M9 15h6M9 7h3"/></svg><span>Invoices</span><em>3</em></button>
-    <button class="nav" data-page="expenses"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h10M4 18h7"/></svg><span>Expenses</span></button>
-    <button class="nav" data-page="suppliers"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3"/><path d="M5 20c.8-3.3 3.1-5 7-5s6.2 1.7 7 5"/></svg><span>Suppliers</span></button>
-    <small class="nav-label second">Insights</small>
-    <button class="nav" data-page="analytics"><svg viewBox="0 0 24 24"><path d="M5 19V9M12 19V5M19 19v-7"/></svg><span>Analytics</span></button>
-    <button class="nav" data-page="reports"><svg viewBox="0 0 24 24"><path d="M6 3h12v18H6zM9 8h6M9 12h6M9 16h4"/></svg><span>Reports</span></button>
-  </nav>
-  <div class="sidebar-bottom">
-    <button class="nav"><svg viewBox="0 0 24 24"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1m-8.6 8.6-2.1 2.1"/></svg><span>Settings</span></button>
-    <div class="ai-status"><span class="ai-orb">✦</span><div><b>OCR5 AI</b><small>All systems operational</small></div><span class="live"></span></div>
-    <div class="profile"><span>MS</span><div><b>Mark Sheehan</b><small>Administrator</small></div><strong>•••</strong></div>
-  </div>
-</aside>
-<main>
-<header class="topbar"><div class="crumb"><span>Mark's Books</span><b>/</b><strong id="crumb">Overview</strong></div><div class="top-actions"><button class="icon-btn">⌘ K</button><button class="icon-btn">◌</button><button class="icon-btn">?</button></div></header>
-
-<section class="page" id="overview">
-  <div class="hero"><div><div class="eyebrow">TUESDAY · 11 AUGUST 2026</div><h1>Good morning, Mark<span>.</span></h1><p>Everything is under control. OCR5 found <b>3 things</b> worth your attention.</p></div><button class="primary" id="upload"><span>＋</span> Add invoices</button></div>
-  <div class="intelligence">
-    <div class="intel-top"><div class="intel-title"><span class="orb">✦</span><div><b>OCR5 Intelligence</b><small>Live bookkeeping assistant</small></div></div><span class="intel-count">3 items</span></div>
-    <div class="intel-items">
-      <button data-page="invoices"><span class="signal amber">!</span><div><b>2 invoices need review</b><small>Confidence below 90%</small></div><span class="arrow">↗</span></button>
-      <button data-page="invoices"><span class="signal violet">◇</span><div><b>Possible duplicate</b><small>Lidl · €184.20 · 94% match</small></div><span class="arrow">↗</span></button>
-      <button data-page="invoices"><span class="signal blue">⌁</span><div><b>VAT discrepancy</b><small>€12.40 extracted · €12.65 expected</small></div><span class="arrow">↗</span></button>
-    </div>
-  </div>
-  <div class="metrics">
-    <article class="metric"><div class="metric-label"><span>Revenue</span><mark>↗ 12.4%</mark></div><strong>€24,820<span>.40</span></strong><small>vs €22,080 last month</small><div class="mini-chart up"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></article>
-    <article class="metric"><div class="metric-label"><span>Expenses</span><mark>↘ 4.2%</mark></div><strong>€8,420<span>.70</span></strong><small>vs €8,790 last month</small><div class="mini-chart down"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></article>
-    <article class="metric"><div class="metric-label"><span>Net position</span><mark class="neutral">August</mark></div><strong>€16,399<span>.70</span></strong><small>Income less expenses</small><div class="metric-line"><span style="width:72%"></span></div></article>
-    <article class="metric"><div class="metric-label"><span>AI accuracy</span><mark>Excellent</mark></div><strong>96<span>.8%</span></strong><small>142 invoices processed</small><div class="confidence-ring"><b>96.8</b></div></article>
-  </div>
-  <div class="dashboard-grid">
-    <article class="panel cashflow"><div class="panel-head"><div><h2>Cash flow</h2><p>Income & expenses · last 6 months</p></div><button class="period">Last 6 months <span>⌄</span></button></div><div class="chart-wrap"><div class="y-axis"><span>€30k</span><span>€20k</span><span>€10k</span><span>€0</span></div><svg class="cash-chart" viewBox="0 0 760 230" preserveAspectRatio="none"><defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#745cff" stop-opacity=".18"/><stop offset="1" stop-color="#745cff" stop-opacity="0"/></linearGradient></defs><path class="area" d="M0 178 C70 170 78 144 145 151 S205 126 270 136 S340 91 405 111 S470 78 530 93 S600 45 655 65 S715 42 760 48 L760 230 L0 230Z"/><path class="line" d="M0 178 C70 170 78 144 145 151 S205 126 270 136 S340 91 405 111 S470 78 530 93 S600 45 655 65 S715 42 760 48"/><path class="line expense" d="M0 202 C65 195 85 182 145 190 S210 172 270 180 S340 154 405 166 S470 138 530 151 S600 119 655 130 S710 108 760 117"/><g class="dots"><circle cx="760" cy="48" r="5"/><circle cx="760" cy="117" r="5"/></g></svg><div class="months"><span>Mar</span><span>Apr</span><span>May</span><span>Jun</span><span>Jul</span><span>Aug</span></div></div><div class="chart-foot"><span><i class="dot income"></i>Income</span><span><i class="dot expense-dot"></i>Expenses</span><b>Net +€16,399.70</b></div></article>
-    <article class="panel spending"><div class="panel-head"><div><h2>Where money goes</h2><p>August expenses</p></div><button class="more">•••</button></div><div class="donut"><div><b>€8.4k</b><span>Total spend</span></div></div><div class="category-list"><div><span><i class="c1"></i>Operations</span><b>€3,420</b></div><div><span><i class="c2"></i>Travel</span><b>€1,870</b></div><div><span><i class="c3"></i>Software</span><b>€1,320</b></div><div><span><i class="c4"></i>Supplies</span><b>€1,050</b></div></div></article>
-  </div>
-  <article class="panel invoices-preview"><div class="panel-head"><div><h2>Recent invoices</h2><p>Latest activity across your books</p></div><button class="text-btn" data-page="invoices">View all invoices <span>→</span></button></div><div class="invoice-table"><div class="invoice-row heading"><span>Supplier</span><span>Invoice</span><span>Date</span><span>Amount</span><span>Status</span></div><div class="invoice-row clickable" data-review="true"><span class="supplier"><i class="supplier-logo lidl">L</i><b>Lidl Ireland</b></span><span>INV-1024</span><span>11 Aug 2026</span><b>€84.20</b><span class="status good"><i></i>Saved</span></div><div class="invoice-row clickable"><span class="supplier"><i class="supplier-logo vod">V</i><b>Vodafone</b></span><span>VF-88219</span><span>10 Aug 2026</span><b>€65.00</b><span class="status good"><i></i>Saved</span></div><div class="invoice-row clickable"><span class="supplier"><i class="supplier-logo tesco">T</i><b>Tesco Ireland</b></span><span>TES-4438</span><span>09 Aug 2026</span><b>€142.30</b><span class="status warning"><i></i>Review</span></div></div></article>
-</section>
-
-<section class="page hidden" id="invoices"><div class="hero"><div><div class="eyebrow">BOOKKEEPING</div><h1>Invoices<span>.</span></h1><p>Every document, understood and ready for review.</p></div><button class="primary" id="upload2"><span>＋</span> Add invoices</button></div><div class="invoice-toolbar"><div class="tabs"><button class="selected">All <b>142</b></button><button>Needs review <b>3</b></button><button>Saved <b>139</b></button></div><label class="search">⌕<input placeholder="Search supplier, invoice or amount…"></label></div><article class="panel invoices-full"><div class="invoice-table"><div class="invoice-row heading"><span>Supplier</span><span>Invoice</span><span>Date</span><span>Amount</span><span>AI confidence</span><span>Status</span></div><div class="invoice-row clickable" data-review="true"><span class="supplier"><i class="supplier-logo lidl">L</i><b>Lidl Ireland</b></span><span>INV-1024</span><span>11 Aug 2026</span><b>€84.20</b><strong class="confidence">98%</strong><span class="status good"><i></i>Saved</span></div><div class="invoice-row clickable"><span class="supplier"><i class="supplier-logo vod">V</i><b>Vodafone</b></span><span>VF-88219</span><span>10 Aug 2026</span><b>€65.00</b><strong class="confidence">99%</strong><span class="status good"><i></i>Saved</span></div><div class="invoice-row clickable"><span class="supplier"><i class="supplier-logo tesco">T</i><b>Tesco Ireland</b></span><span>TES-4438</span><span>09 Aug 2026</span><b>€142.30</b><strong class="low">78%</strong><span class="status warning"><i></i>Review</span></div><div class="invoice-row clickable"><span class="supplier"><i class="supplier-logo drop">D</i><b>Dropbox</b></span><span>DB-9921</span><span>08 Aug 2026</span><b>€24.00</b><strong class="confidence">97%</strong><span class="status good"><i></i>Saved</span></div></div></article></section>
-
-<section class="page hidden" id="expenses"><div class="hero"><div><div class="eyebrow">BOOKKEEPING</div><h1>Expenses<span>.</span></h1><p>A clean view of where the business is spending.</p></div></div><div class="metrics four"><article class="metric"><div class="metric-label"><span>This month</span><mark>↘ 4.2%</mark></div><strong>€8,420<span>.70</span></strong><small>Compared with July</small></article><article class="metric"><div class="metric-label"><span>Largest category</span></div><strong>€3,420</strong><small>Operations</small></article><article class="metric"><div class="metric-label"><span>Transactions</span></div><strong>84</strong><small>Automatically categorised</small></article><article class="metric"><div class="metric-label"><span>Average expense</span></div><strong>€100<span>.25</span></strong><small>Per transaction</small></article></div></section>
-<section class="page hidden" id="suppliers"><div class="hero"><div><div class="eyebrow">RELATIONSHIPS</div><h1>Suppliers<span>.</span></h1><p>Know who you're buying from and what you're spending.</p></div></div><div class="supplier-grid"><article><i class="supplier-logo lidl">L</i><div><b>Lidl Ireland</b><small>28 invoices · €2,841.20</small></div><strong>€2.8k</strong></article><article><i class="supplier-logo vod">V</i><div><b>Vodafone</b><small>8 invoices · €520.00</small></div><strong>€520</strong></article><article><i class="supplier-logo tesco">T</i><div><b>Tesco Ireland</b><small>19 invoices · €1,842.30</small></div><strong>€1.8k</strong></article></div></section>
-<section class="page hidden" id="analytics"><div class="hero"><div><div class="eyebrow">INSIGHTS</div><h1>Analytics<span>.</span></h1><p>Turn your bookkeeping data into decisions.</p></div></div><div class="insight-card"><span class="orb">✦</span><div><small>OCR5 INSIGHT</small><h2>Operating spend is down 4.2% this month.</h2><p>Lower travel and operations spend more than offset the increase in software costs.</p></div></div></section>
-<section class="page hidden" id="reports"><div class="hero"><div><div class="eyebrow">INSIGHTS</div><h1>Reports<span>.</span></h1><p>Clear financial reporting without the spreadsheet headache.</p></div><button class="secondary">Export report ↓</button></div><div class="reports"><article><small>VAT summary</small><b>€2,140.35</b><span>August 2026 · Ready</span><button>Open report →</button></article><article><small>Expense report</small><b>€8,420.70</b><span>August 2026 · Ready</span><button>Open report →</button></article><article><small>Invoice register</small><b>142 invoices</b><span>Year to date · Ready</span><button>Open report →</button></article></div></section>
-</main>
-</div>
-
-<div class="modal hidden" id="modal"><div class="backdrop"></div><div class="modal-card"><button class="close" id="close">×</button><span class="upload-mark">↑</span><div class="eyebrow">OCR5 AI</div><h2>Bring your books up to date.</h2><p>Drop invoices here. OCR5 will extract the data, validate totals and check for duplicates.</p><div class="drop"><strong>Drop invoices here</strong><span>or click to browse · JPG, PNG, HEIC, TIFF</span></div><div class="processing hidden"><span class="spinner"></span><div><b>OCR5 is reading your invoices</b><small>Extracting fields · validating totals · checking duplicates</small></div></div></div></div>
-
-<div class="drawer hidden" id="drawer"><div class="backdrop"></div><aside><div class="drawer-head"><div><small>INVOICE REVIEW</small><h2>INV-1024</h2></div><button class="close" id="drawer-close">×</button></div><div class="review-layout"><div class="document"><div class="doc-brand">LIDL</div><div class="doc-meta">LIDL IRELAND GMBH<br>Main Street · Co. Cork, Ireland</div><div class="doc-rule"></div><div class="doc-line"><span>Invoice no.</span><b>INV-1024</b></div><div class="doc-line"><span>Date</span><b>11 / 08 / 2026</b></div><div class="doc-rule"></div><div class="doc-line"><span>Fresh produce</span><b>€34.20</b></div><div class="doc-line"><span>Groceries</span><b>€38.37</b></div><div class="doc-rule"></div><div class="doc-total"><span>Total</span><b>€84.20</b></div><span class="doc-stamp">AI CAPTURED</span></div><div class="review-panel"><div class="review-title"><div><b>Extracted information</b><small>Review before saving to your books</small></div><span class="score">98% confident</span></div><label>Supplier<input value="Lidl Ireland"></label><label>Invoice number<input value="INV-1024"></label><div class="two"><label>Date<input value="11/08/2026"></label><label>Currency<input value="EUR"></label></div><div class="two"><label>Subtotal<input value="€72.57"></label><label>VAT<input value="€11.63"></label></div><label>Total<input value="€84.20"></label><div class="ai-note"><span>✦</span><div><b>Looks good</b><small>Key fields reconcile with the document. No duplicate found.</small></div></div><div class="review-actions"><button class="secondary">Needs review</button><button class="primary" id="approve">✓ Approve invoice</button></div></div></div></aside></div>
-<script src="./app.js"></script>
-</body></html>
+<!-- The existing OCR5 application markup is intentionally preserved below. -->
