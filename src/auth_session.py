@@ -1,7 +1,7 @@
 """Streamlit session helpers for OCR5 authentication.
 
-The Supabase auth client is kept in Streamlit session state so the app can use
-an authenticated user's access token for RLS-protected database requests.
+The authenticated Supabase client is kept in Streamlit session state so its
+access token is used for RLS-protected database requests.
 """
 from __future__ import annotations
 
@@ -33,21 +33,19 @@ def current_user():
             return user.user
     except Exception:
         pass
-    return st.session_state.get(AUTH_USER_KEY)
+    return None
 
 
 def login(email: str, password: str):
-    response = sign_in(email, password)
-    client = create_auth_client()
-    # sign_in creates a session on its client; create a fresh client here only
-    # as a fallback for environments where the auth library persists it.
+    client, response = sign_in(email, password)
     st.session_state[AUTH_CLIENT_KEY] = client
     st.session_state[AUTH_USER_KEY] = response.user
     return response
 
 
 def register(email: str, password: str):
-    response = sign_up(email, password)
+    client, response = sign_up(email, password)
+    st.session_state[AUTH_CLIENT_KEY] = client
     if response.user:
         st.session_state[AUTH_USER_KEY] = response.user
     return response
