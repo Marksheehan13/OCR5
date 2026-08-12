@@ -20,12 +20,16 @@ def store_invoice_result(
     invoice: InvoiceExtraction,
     image_bytes: bytes | None = None,
     mime_type: str = "application/octet-stream",
+    client_id: int | None = None,
 ):
-    """Store an approved invoice and its reviewed line items."""
+    """Store an approved invoice and its reviewed line items for a client."""
+    if client_id is None:
+        raise DatabaseError("Select a client before saving an invoice.")
+
     image_path = invoice.source_file
     if image_bytes is not None:
         try:
-            image_path = upload_invoice_image(image_bytes, invoice.source_file, mime_type)
+            image_path = upload_invoice_image(image_bytes, invoice.source_file, mime_type, client_id=client_id)
         except StorageError as exc:
             raise DatabaseError(f"Invoice image could not be stored: {exc}") from exc
 
@@ -41,12 +45,14 @@ def store_invoice_result(
         subtotal=_number(invoice.subtotal.value),
         vat_amount=_number(invoice.vat_amount.value),
         vat_rate=_number(invoice.vat_rate.value),
+        client_id=client_id,
     )
     line_items_saved = save_invoice_line_items(invoice_id, invoice.line_items)
 
     return {
         "status": "saved",
         "invoice_id": invoice_id,
+        "client_id": client_id,
         "supplier": invoice.supplier.value,
         "amount": _number(invoice.amount.value),
         "confidence": confidence,

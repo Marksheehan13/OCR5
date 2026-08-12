@@ -6,8 +6,8 @@ Persistent storage layer for OCR5, backed by Supabase (Postgres).
 
 from __future__ import annotations
 
-import os
 from collections import defaultdict
+import os
 
 from supabase import create_client, Client
 
@@ -28,10 +28,17 @@ def initialise_database() -> None:
     return None
 
 
-def save_invoice(supplier: str | None, invoice_date: str | None, amount: float | None, currency: str, confidence: int, image_path: str, invoice_number: str | None = None, subtotal: float | None = None, vat_amount: float | None = None, vat_rate: float | None = None) -> int:
+def save_invoice(supplier: str | None, invoice_date: str | None, amount: float | None, currency: str,
+                 confidence: int, image_path: str, invoice_number: str | None = None,
+                 subtotal: float | None = None, vat_amount: float | None = None,
+                 vat_rate: float | None = None, client_id: int | None = None) -> int:
+    """Save an invoice, optionally scoped to a client."""
+    if client_id is None:
+        raise DatabaseError("A client must be selected before an invoice can be saved.")
     response = _get_client().table("invoices").insert({
-        "supplier": supplier, "invoice_date": invoice_date, "amount": amount, "currency": currency,
-        "confidence": confidence, "image_path": image_path, "invoice_number": invoice_number,
+        "client_id": client_id, "supplier": supplier, "invoice_date": invoice_date,
+        "amount": amount, "currency": currency, "confidence": confidence,
+        "image_path": image_path, "invoice_number": invoice_number,
         "subtotal": subtotal, "vat_amount": vat_amount, "vat_rate": vat_rate,
     }).execute()
     if not response.data:
@@ -68,10 +75,18 @@ def get_all_invoice_line_items() -> list[dict]:
     return response.data or []
 
 
-def get_invoice_analytics() -> dict:
-    """Return database-backed invoice and line-item aggregates."""
-    invoices = get_all_invoices()
-    items = get_all_invoice_line_items()
+def get_client_invoice_line_items(client_id: int) -> list[dict]:
+    invoice_ids = [row[0] for row in get_all_invoices(client_id) if row[0] is not None]
+    if not invoice_ids:
+        return []
+    response = _get_client().table("invoice_line_items").select("id,invoice_id,description,quantity,unit_price,vat_rate,line_total,confidence,created_at").in_("invoice_id", invoice_ids).order("created_at", desc=True).execute()
+    return response.data or []
+
+
+def get_invoice_analytics(client_id: int | None = None) -> dict:
+    """Return database-backed invoice and line-item aggregates for one client."""
+    invoices = get_all_invoices(client_id)
+    items = get_client_invoice_line_items(client_id) if client_id is not None else get_all_invoice_line_items()
     valid_amounts = [float(row[3]) for row in invoices if row[3] is not None]
     valid_vat = [float(row[10]) for row in invoices if row[10] is not None]
     by_supplier = defaultdict(float)
@@ -84,6 +99,7 @@ def get_invoice_analytics() -> dict:
         if row[2]:
             by_month[str(row[2])[:7]] += float(row[3])
     return {
+        "client_id": client_id,
         "invoice_count": len(invoices), "line_item_count": len(items), "total_spend": sum(valid_amounts),
         "total_vat": sum(valid_vat), "average_invoice_value": sum(valid_amounts) / len(valid_amounts) if valid_amounts else 0.0,
         "spend_by_supplier": dict(sorted(by_supplier.items(), key=lambda x: x[1], reverse=True)),
@@ -91,11 +107,12 @@ def get_invoice_analytics() -> dict:
     }
 
 
-def get_supplier_item_analysis() -> list[dict]:
+def get_supplier_item_analysis(client_id: int | None = None) -> list[dict]:
     """Aggregate purchased items by normalized description and supplier."""
-    invoices = {row[0]: (row[1] or "Unknown supplier") for row in get_all_invoices()}
+    invoices = {row[0]: (row[1] or "Unknown supplier") for row in get_all_invoices(client_id)}
     groups = {}
-    for item in get_all_invoice_line_items():
+    items = get_client_invoice_line_items(client_id) if client_id is not None else get_all_invoice_line_items()
+    for item in items:
         supplier = invoices.get(item["invoice_id"], "Unknown supplier")
         description = " ".join(str(item.get("description") or "").lower().split())
         if not description:
@@ -117,9 +134,9 @@ def get_supplier_item_analysis() -> list[dict]:
     return sorted(results, key=lambda x: x["total_spend"], reverse=True)
 
 
-def get_item_price_comparisons() -> list[dict]:
+def get_item_price_comparisons(client_id: int | None = None) -> list[dict]:
     """Compare average unit prices for matching items across suppliers."""
-    analysis = get_supplier_item_analysis()
+    analysis = get_supplier_item_analysis(client_id)
     items = defaultdict(list)
     for row in analysis:
         if row["average_unit_price"] is not None:
@@ -136,20 +153,26 @@ def get_item_price_comparisons() -> list[dict]:
     return sorted(comparisons, key=lambda x: x["price_difference"], reverse=True)
 
 
-_COLUMNS = "id,supplier,invoice_date,amount,currency,confidence,image_path,created_at,invoice_number,subtotal,vat_amount,vat_rate"
+_COLUMNS = "id,supplier,invoice_date,amount,currency,confidence,image_path,created_at,invoice_number,subtotal,vat_amount,vat_rate,client_id"
 
 
 def _rows(response) -> list[tuple]:
-    return [(row["id"], row["supplier"], row["invoice_date"], row["amount"], row["currency"], row["confidence"], row["image_path"], row["created_at"], row.get("invoice_number"), row.get("subtotal"), row.get("vat_amount"), row.get("vat_rate")) for row in response.data]
+    return [(row["id"], row["supplier"], row["invoice_date"], row["amount"], row["currency"], row["confidence"], row["image_path"], row["created_at"], row.get("invoice_number"), row.get("subtotal"), row.get("vat_amount"), row.get("vat_rate"), row.get("client_id")) for row in response.data]
 
 
-def get_all_invoices() -> list[tuple]:
-    response = _get_client().table("invoices").select(_COLUMNS).order("created_at", desc=True).execute()
+def get_all_invoices(client_id: int | None = None) -> list[tuple]:
+    query = _get_client().table("invoices").select(_COLUMNS)
+    if client_id is not None:
+        query = query.eq("client_id", client_id)
+    response = query.order("created_at", desc=True).execute()
     return _rows(response)
 
 
-def search_supplier(supplier: str) -> list[tuple]:
-    response = _get_client().table("invoices").select(_COLUMNS).ilike("supplier", f"%{supplier}%").order("created_at", desc=True).execute()
+def search_supplier(supplier: str, client_id: int | None = None) -> list[tuple]:
+    query = _get_client().table("invoices").select(_COLUMNS).ilike("supplier", f"%{supplier}%")
+    if client_id is not None:
+        query = query.eq("client_id", client_id)
+    response = query.order("created_at", desc=True).execute()
     return _rows(response)
 
 
