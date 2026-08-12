@@ -29,7 +29,7 @@ def store_invoice_result(
     image_path = invoice.source_file
     if image_bytes is not None:
         try:
-            image_path = upload_invoice_image(image_bytes, invoice.source_file, mime_type)
+            image_path = upload_invoice_image(image_bytes, invoice.source_file, mime_type, client_id=client_id)
         except StorageError as exc:
             raise DatabaseError(f"Invoice image could not be stored: {exc}") from exc
 
