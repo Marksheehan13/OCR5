@@ -1,12 +1,38 @@
 """Client management persistence for OCR5."""
 from __future__ import annotations
 from .database import DatabaseError, _get_client, _rows, _COLUMNS
-from .auth import organisation_id
+from .auth import organisation_id, ensure_workspace
+from .db_context import get_identity_email
+
+
+def _streamlit_identity() -> tuple[str, str, str]:
+    """Read the already-verified Streamlit OIDC identity on the server."""
+    try:
+        import streamlit as st
+        user = st.user
+        email = getattr(user, "email", None) or user.get("email", "")
+        name = getattr(user, "name", None) or user.get("name", "")
+        return str(email or "").strip().lower(), str(name or "").strip(), ""
+    except Exception:
+        return "", "", ""
+
 
 def _org_id() -> str:
-    client=_get_client(); value=organisation_id(client)
-    if not value: raise DatabaseError("Your OCR5 account is not attached to an organisation yet.")
-    return value
+    client = _get_client()
+    value = organisation_id(client)
+    if value:
+        return value
+
+    email = get_identity_email()
+    name = ""
+    company = ""
+    if not email:
+        email, name, company = _streamlit_identity()
+    if email:
+        workspace = ensure_workspace(email, name, company)
+        return workspace["organization_id"]
+    raise DatabaseError("Your OCR5 account could not be linked to a workspace.")
+
 
 def create_client(name, company_name=None, email=None, phone=None, address=None)->dict:
     name=(name or "").strip()
@@ -15,14 +41,17 @@ def create_client(name, company_name=None, email=None, phone=None, address=None)
     if not response.data: raise DatabaseError("Client was not returned after saving.")
     return response.data[0]
 
+
 def list_clients(include_inactive=False)->list[dict]:
-    q=_get_client().table("clients").select("id,name,company_name,email,phone,address,active,created_at,updated_at,organization_id")
+    q=_get_client().table("clients").select("id,name,company_name,email,phone,address,active,created_at,updated_at,organization_id").eq("organization_id",_org_id())
     if not include_inactive:q=q.eq("active",True)
     return q.order("name").execute().data or []
 
+
 def get_client(client_id:int)->dict|None:
-    response=_get_client().table("clients").select("id,name,company_name,email,phone,address,active,created_at,updated_at,organization_id").eq("id",client_id).limit(1).execute()
+    response=_get_client().table("clients").select("id,name,company_name,email,phone,address,active,created_at,updated_at,organization_id").eq("id",client_id).eq("organization_id",_org_id()).limit(1).execute()
     return response.data[0] if response.data else None
+
 
 def update_client(client_id:int,**fields)->dict:
     allowed={"name","company_name","email","phone","address","active"}; values={k:v for k,v in fields.items() if k in allowed and v is not None}
@@ -32,9 +61,10 @@ def update_client(client_id:int,**fields)->dict:
     for key in ("company_name","email","phone","address"):
         if key in values:values[key]=str(values[key]).strip() or None
     if not values:raise DatabaseError("No client fields were supplied.")
-    response=_get_client().table("clients").update(values).eq("id",client_id).execute()
+    response=_get_client().table("clients").update(values).eq("id",client_id).eq("organization_id",_org_id()).execute()
     if not response.data:raise DatabaseError("Client was not found or could not be updated.")
     return response.data[0]
+
 
 def archive_client(client_id:int)->dict:return update_client(client_id,active=False)
 def restore_client(client_id:int)->dict:return update_client(client_id,active=True)
