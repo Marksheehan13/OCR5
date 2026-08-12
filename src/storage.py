@@ -64,3 +64,8 @@ def create_invoice_image_url(image_path: str, expires_in: int = 3600) -> str:
         return ""
     except Exception as exc:  # noqa: BLE001
         raise StorageError(f"Could not create invoice image URL: {exc}") from exc
+
+
+def get_storage_client() -> Client:
+    """Return the application storage client for server-side operations."""
+    return _get_client()
