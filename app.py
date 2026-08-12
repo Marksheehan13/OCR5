@@ -204,10 +204,11 @@ if st.session_state.stage == "years":
                     total += float(row[3] or 0)
             except Exception:
                 continue
+        invoice_label = "invoice" if count == 1 else "invoices"
         with st.container(border=True):
             left, right = st.columns([5, 1])
             with left:
-                st.markdown(f'<div class="card-title">{year}</div><div class="card-meta">{count} invoice{\"s\" if count != 1 else \"\"} · {total:,.2f} tracked</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="card-title">{year}</div><div class="card-meta">{count} {invoice_label} · {total:,.2f} tracked</div>', unsafe_allow_html=True)
             with right:
                 if st.button("Open →", key=f"open_year_{year}", use_container_width=True):
                     go_workspace(year); st.rerun()
