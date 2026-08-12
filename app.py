@@ -13,8 +13,41 @@ from src.models import InvoiceExtraction
 from src.server_config import get_ai_api_key, get_ai_provider, validate_server_config
 from src.settings import get_setting, save_settings
 
-initialise_database()
 st.set_page_config(page_title="OCR5 Bookkeeping", page_icon="🧾", layout="wide", initial_sidebar_state="collapsed")
+
+# Native Streamlit OIDC authentication. Credentials stay in Streamlit secrets;
+# end users never receive Supabase or AI infrastructure credentials.
+try:
+    is_logged_in = bool(st.user.is_logged_in)
+except Exception:
+    is_logged_in = False
+
+if not is_logged_in:
+    st.markdown("""
+    <style>
+    [data-testid="stSidebar"]{display:none}
+    .block-container{max-width:720px;padding-top:12vh}
+    .login-shell{text-align:center;padding:3rem 1rem}
+    .login-brand{font-size:.75rem;font-weight:800;letter-spacing:.18em;opacity:.5}
+    .login-title{font-size:3rem;font-weight:780;letter-spacing:-.05em;margin:.8rem 0 .6rem}
+    .login-copy{opacity:.58;margin-bottom:2rem}
+    </style>
+    <div class="login-shell">
+      <div class="login-brand">OCR5</div>
+      <div class="login-title">Your bookkeeping,<br>organised.</div>
+      <div class="login-copy">Secure invoice processing for your bookkeeping workspace.</div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.button("Continue with Google", type="primary", width="stretch", on_click=st.login)
+    st.caption("Sign in securely. OCR5 manages the technical infrastructure for you.")
+    st.stop()
+
+# Authenticated identity is available through st.user. Keep the identity stable
+# for the application layer; authorization is enforced separately by Supabase RLS.
+user_email = getattr(st.user, "email", None) or st.user.get("email", "")
+user_name = getattr(st.user, "name", None) or st.user.get("name", "")
+
+initialise_database()
 
 st.markdown("""
 <style>
@@ -34,7 +67,7 @@ def go_years(cid): st.session_state.stage="years";st.session_state.active_client
 def go_workspace(y): st.session_state.stage="workspace";st.session_state.selected_year=int(y);reset()
 
 if st.session_state.stage=="clients":
-    st.markdown('<div class="hero"><div class="brand">OCR5</div><h1>Who are you working on?</h1><p>Search for a client to open their private bookkeeping workspace.</p></div>',unsafe_allow_html=True)
+    st.markdown(f'<div class="hero"><div class="brand">OCR5</div><h1>Who are you working on?</h1><p>Search for a client to open their private bookkeeping workspace.</p></div>',unsafe_allow_html=True)
     q=st.text_input("Search",placeholder="Search clients...",label_visibility="collapsed",key="client_query")
     matches=[c for c in clients if not q.strip() or q.lower() in client_name(c).lower() or q.lower() in str(c.get("email","")).lower()]
     st.markdown('<div class="section-label">Clients</div>',unsafe_allow_html=True)
@@ -150,6 +183,9 @@ with st.expander("⚙ Settings"):
     st.markdown("**OCR5 configuration**")
     st.caption("Infrastructure and AI credentials are managed securely by the application. End users do not need to enter API keys or database credentials.")
     provider=get_ai_provider();config=validate_server_config()
+    st.write(f"Signed in as: **{user_name or user_email}**")
+    if st.button("Log out"):
+        st.logout()
     st.write(f"AI provider: **{provider.title()}**")
     st.write(f"AI service: **{'Connected' if config['ai'] else 'Not configured'}**")
     st.write(f"Database service: **{'Connected' if config['supabase'] else 'Not configured'}**")
