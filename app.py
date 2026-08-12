@@ -10,6 +10,7 @@ from src.database import DatabaseError, get_all_invoices, initialise_database
 from src.database_integration import store_invoice_result
 from src.llm_extractor import DEFAULT_PROVIDER, PROVIDERS, ExtractionError, extract_invoice
 from src.models import InvoiceExtraction
+from src.server_config import get_ai_api_key, get_ai_provider, validate_server_config
 from src.settings import get_setting, save_settings
 
 initialise_database()
@@ -21,9 +22,6 @@ st.markdown("""
 .hero{text-align:center;padding:3rem 1rem 2rem}.brand{font-size:.75rem;font-weight:800;letter-spacing:.18em;text-transform:uppercase;opacity:.5;margin-bottom:1.5rem}.hero h1{font-size:2.7rem;line-height:1.05;margin:0 0 .6rem;font-weight:760;letter-spacing:-.045em}.hero p{opacity:.58;margin:0 auto 1.8rem;max-width:620px}.search-wrap{max-width:700px;margin:auto}.search-wrap input{font-size:1.05rem!important;padding:1rem!important}.section-label{font-size:.7rem;font-weight:800;letter-spacing:.13em;text-transform:uppercase;opacity:.48;margin:1.7rem 0 .7rem}.card-title{font-size:1.05rem;font-weight:720}.card-meta{font-size:.82rem;opacity:.56;margin-top:.2rem}.workspace-head{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:1.3rem}.workspace-kicker{font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;opacity:.5;font-weight:800}.workspace-title{font-size:2.35rem;font-weight:760;letter-spacing:-.04em;margin:.15rem 0 0}.context{padding:.55rem .85rem;border:1px solid rgba(128,128,128,.2);border-radius:999px;font-size:.8rem;opacity:.65}.metric{padding:1rem 1.1rem;border:1px solid rgba(128,128,128,.18);border-radius:16px;background:rgba(128,128,128,.035)}.metric-label{font-size:.72rem;opacity:.52}.metric-value{font-size:1.55rem;font-weight:760;margin-top:.2rem}.empty{text-align:center;padding:3rem 1rem;border:1px dashed rgba(128,128,128,.25);border-radius:16px;opacity:.55}div[data-testid="stButton"] button{border-radius:14px;min-height:46px;font-weight:650}
 </style>""", unsafe_allow_html=True)
 
-def secret(name):
-    try:return str(st.secrets.get(name,"") or "")
-    except Exception:return ""
 def client_name(c): return c.get("company_name") or c.get("name") or f"Client {c.get('id','')}"
 def reset():
     for k,v in {"results":[],"overrides":{},"saved_indexes":set(),"source_images":[],"duplicate_confirmations":set()}.items():st.session_state[k]=v
@@ -114,17 +112,22 @@ else: st.markdown('<div class="empty"><strong>No invoices yet</strong><br>Upload
 
 if st.session_state.get("show_upload"):
     st.divider();st.markdown("### Upload invoices")
-    provider_names=list(PROVIDERS);saved=get_setting("OCR5_PROVIDER",DEFAULT_PROVIDER);saved=saved if saved in PROVIDERS else DEFAULT_PROVIDER;provider=st.selectbox("AI provider",provider_names,index=provider_names.index(saved));api_key=st.text_input("AI API key",value=get_setting("OCR5_API_KEY") or secret(PROVIDERS[provider]["env_var"]),type="password")
-    files=st.file_uploader("Upload invoice photos",type=["jpg","jpeg","png","heic","heif","bmp","tiff","webp"],accept_multiple_files=True)
-    if st.button("Process invoices",type="primary",disabled=not files or not api_key):
-        results=[];images=[]
-        for f in files:
-            with st.status(f"Processing {f.name}...",expanded=True) as status:
-                data=f.getvalue()
-                with tempfile.NamedTemporaryFile(delete=False,suffix=Path(f.name).suffix) as tmp:tmp.write(data);path=tmp.name
-                try:r=extract_invoice(path,api_key=api_key,provider=provider);r.source_file=f.name;results.append(r);images.append({"bytes":data,"mime_type":f.type or "application/octet-stream"});status.update(label="Extraction complete",state="complete")
-                except Exception as e:status.update(label="Extraction failed",state="error");st.error(str(e))
-        st.session_state.results=results;st.session_state.source_images=images
+    provider=get_ai_provider();api_key=get_ai_api_key(provider)
+    config=validate_server_config()
+    if not config["ai"]:
+        st.error("OCR5 AI is not configured on the server. An administrator must add the AI provider API key to the deployment secrets.")
+    else:
+        st.caption(f"OCR5 AI · {provider.title()} · secured by the application")
+        files=st.file_uploader("Upload invoice photos",type=["jpg","jpeg","png","heic","heif","bmp","tiff","webp"],accept_multiple_files=True)
+        if st.button("Process invoices",type="primary",disabled=not files):
+            results=[];images=[]
+            for f in files:
+                with st.status(f"Processing {f.name}...",expanded=True) as status:
+                    data=f.getvalue()
+                    with tempfile.NamedTemporaryFile(delete=False,suffix=Path(f.name).suffix) as tmp:tmp.write(data);path=tmp.name
+                    try:r=extract_invoice(path,api_key=api_key,provider=provider);r.source_file=f.name;results.append(r);images.append({"bytes":data,"mime_type":f.type or "application/octet-stream"});status.update(label="Extraction complete",state="complete")
+                    except Exception as e:status.update(label="Extraction failed",state="error");st.error(str(e))
+            st.session_state.results=results;st.session_state.source_images=images
 
 if st.session_state.results:
     st.markdown("### Review & approve")
@@ -144,6 +147,11 @@ if st.session_state.get("show_analytics") and not df.empty:
     st.divider();st.markdown("### Analytics");st.bar_chart(df.assign(Supplier=df["Supplier"].fillna("Unknown")).groupby("Supplier")["Amount"].sum().sort_values(ascending=False).head(12))
 
 with st.expander("⚙ Settings"):
-    provider_names=list(PROVIDERS);saved=get_setting("OCR5_PROVIDER",DEFAULT_PROVIDER);saved=saved if saved in PROVIDERS else DEFAULT_PROVIDER;provider=st.selectbox("Default AI provider",provider_names,index=provider_names.index(saved),key="settings_provider");api_key=st.text_input("AI API key",value=get_setting("OCR5_API_KEY") or secret(PROVIDERS[provider]["env_var"]),type="password",key="settings_key");su=st.text_input("Supabase URL",value=get_setting("SUPABASE_URL") or secret("SUPABASE_URL"));sk=st.text_input("Supabase key",value=get_setting("SUPABASE_KEY") or secret("SUPABASE_KEY"),type="password")
-    if st.button("Save settings"):
-        save_settings(provider=provider,api_key=api_key,supabase_url=su,supabase_key=sk);st.success("Settings saved.");st.rerun()
+    st.markdown("**OCR5 configuration**")
+    st.caption("Infrastructure and AI credentials are managed securely by the application. End users do not need to enter API keys or database credentials.")
+    provider=get_ai_provider();config=validate_server_config()
+    st.write(f"AI provider: **{provider.title()}**")
+    st.write(f"AI service: **{'Connected' if config['ai'] else 'Not configured'}**")
+    st.write(f"Database service: **{'Connected' if config['supabase'] else 'Not configured'}**")
+    if st.button("Save provider preference"):
+        save_settings(provider=provider);st.success("Preference saved.")
